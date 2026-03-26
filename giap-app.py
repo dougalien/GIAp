@@ -11,7 +11,7 @@ from PIL import Image
 API_URL = "https://api.perplexity.ai/chat/completions"
 DEFAULT_MODEL = "sonar-pro"
 
-# ---------- State & helpers ----------
+# ---------- Shared engine with GIA ----------
 
 def init_state():
     defaults = {
@@ -20,25 +20,21 @@ def init_state():
         "image_bytes": None,
         "image_mime": None,
         "image_data_uri": None,
-        "last_uploaded_signature": None,
-        "last_ai_message": "",
-        # Simple student flow
-        "student_guess": "",
-        "student_nickname": "",
-        "followup_history": [],
-        # Hidden / instructor
-        "mode": "Auto",
-        "model": DEFAULT_MODEL,
-        "specimen_label": "",
-        "context_notes": "",
-        "include_auto_zoom": True,
-        "zoom_fraction": 0.5,
-        # Geo (stubbed for now)
-        "latitude": None,
-        "longitude": None,
-        "location_accuracy_m": None,
-        # Internal
+        "display_messages": [],
         "api_history": [],
+        "mode": "Auto",
+        "context_notes": "",
+        "specimen_label": "",
+        "model": DEFAULT_MODEL,
+        "last_uploaded_signature": None,
+        # Tutoring flow
+        "student_observations": "",
+        "student_best_answer": "",
+        "known_name": "",
+        "student_name": "",
+        # Zoom options
+        "include_auto_zoom": False,
+        "zoom_fraction": 0.5,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -144,217 +140,214 @@ Decide which domain best fits the specimen: rock, mineral, fossil, sand/granular
 If the domain is unclear, say so explicitly and explain what visible evidence would help.
 """,
         "Rock": """
-Focus on rock identification with simple, student-friendly language. Mention texture, grain size, layering, vesicles, and foliation only if they are clearly visible.
+Focus on rock identification. Prioritize texture, grain size, clast vs crystalline texture, sorting, rounding, layering, vesicles, foliation, cement, and matrix.
+Avoid overclaiming composition when the image does not support it.
 """,
         "Mineral": """
-Focus on mineral identification using easy terms: color, shine, transparency, and crystal shape. Do not overclaim species without strong visual evidence.
+Focus on mineral identification. Prioritize color, luster, transparency, habit, cleavage/fracture clues, crystal form, and likely hardness implications if visible.
+Avoid claiming a mineral species unless the image evidence is strong.
 """,
         "Fossil": """
-Focus on fossil identification in simple language: shell or body shape, symmetry, segments, and obvious patterns.
+Focus on fossil identification. Prioritize symmetry, segmentation, ornamentation, shell geometry, visible structures, preservation style, and likely fossil group.
+Avoid forcing a genus/species ID from weak evidence.
 """,
         "Sand/Granular": """
-Focus on sand or grains in simple terms: grain size, round vs sharp edges, and overall mix of light vs dark grains.
+Focus on sand, grains, sediment, soil particles, or particulate forensic-style material.
+Comment when possible on grain size class, sorting, roundness/angularity, sphericity, transparency/opacity, luster, quartz likelihood, feldspar clues, lithic fragments, heavy minerals, organic fragments, and what cannot be determined from this image alone.
+Do not call it a powder or crystal substance unless the image clearly supports that language.
 """,
         "Forensic": """
-Focus on describing tiny particles in everyday language, being very cautious about any strong identification.
+Focus on trace material or forensic-style particulate evidence.
+Describe visible particle classes, shape variation, color variation, transparency, possible natural vs manufactured particles, contamination risk, and what follow-up observations are needed before any strong claim.
+Be especially conservative.
 """,
     }
 
     return f"""
-You are a very concise, friendly geology helper for an introductory lab app in 2026.
+You are a conversational geology tutor for an introductory college teaching app in 2026.
 
-Your job:
-- Look at each image and give just a few clear observations that a beginner can see.
-- Compare those observations to the student's suggested name.
-- If the student's name is probably right, say "Congratulations" or similar, then briefly explain 1–3 reasons why it fits.
-- If the name is probably wrong or too specific, say kindly that it may not match and suggest 1–2 visible reasons why, in simple language.
-- Always keep the tone supportive and short. Avoid long paragraphs.
-- Suggest exactly one simple next step if the image is hard to read (e.g., better light, different angle, add a scale like a coin or ruler).
-- Do not talk like a research paper. Use short sentences and plain words.
-- Do not list more than about 4 short sentences total, or 3 short bullet-style lines.
+General rules:
+- Sound like a patient lab instructor, not a script. Vary your wording and examples.
+- Distinguish direct observation from interpretation and keep observations honest, even if they do not fully support the instructor's known name.
+- Be useful, specific, cautious, and friendly.
+- Do not overclaim. Admit uncertainty and change your mind if new information appears.
+- When discussing geology, focus on the actual descriptive features students should observe.
+- Teach the student how to look, not just what to conclude.
+- If the evidence is weak, offer a small number of plausible interpretations and explain why.
+- Keep responses compact (about 4–8 sentences) and clearly tied to THIS particular image and chat turn.
+- Whenever it helps, explicitly connect your explanation to what the student just said.
+- Avoid repeating the same examples or sentence openings you used earlier in this conversation.
+- Use the full image for overall context and scale, and any zoomed image(s) to inspect fine details like textures, grain boundaries, cleavage, or fossils.
+- If the student asks for a summary or evaluation, provide it in a friendly, concise way that validates what they did well and gives specific next steps.
 
-Student reading and typing should be minimal. Focus on what they can actually see.
+Response style:
+- Answer in 1–2 natural-sounding paragraphs.
+- Finish with exactly one short, open-ended question to keep the conversation going (unless the student explicitly asks for a summary or says they are done).
 
 Domain instructions:
 {mode_guidance.get(mode, mode_guidance["Auto"])}
 """.strip()
 
 
-def build_api_messages(user_prompt_text):
+def build_api_messages():
     messages = [{"role": "system", "content": build_system_prompt(st.session_state.mode)}]
-    content = [{"type": "text", "text": user_prompt_text}]
-    images = get_image_contents_for_api()
-    content.extend(images)
-    messages.append({"role": "user", "content": content})
+
+    for item in st.session_state.api_history:
+        if item["role"] == "user":
+            content = [{"type": "text", "text": item["content"]}]
+            images = get_image_contents_for_api()
+            content.extend(images)
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "assistant", "content": item["content"]})
+
     return messages
 
 
-# DEBUG version of call_perplexity
-def call_perplexity(messages):
+def call_perplexity(messages=None):
     api_key = get_api_key()
     if not api_key:
-        st.error("Missing PERPLEXITY_API_KEY in your environment.")
-        return "Error: no API key set."
+        raise RuntimeError("Missing PERPLEXITY_API_KEY in your environment.")
 
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
+    if messages is None:
+        messages = build_api_messages()
+
     payload = {
         "model": st.session_state.model,
         "messages": messages,
     }
 
-    st.write("DEBUG: sending request to Perplexity...")
-
-    try:
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=180)
-    except Exception as e:
-        st.error(f"Request error: {e}")
-        return "Error: request to AI failed."
-
-    st.write(f"DEBUG: HTTP status {response.status_code}")
+    response = requests.post(API_URL, headers=headers, json=payload, timeout=180)
 
     if response.status_code != 200:
-        st.error(f"Perplexity error {response.status_code}: {response.text[:300]}")
-        return f"Error: AI returned status {response.status_code}."
+        raise RuntimeError(
+            f"Perplexity error {response.status_code}: {response.text[:2000]}"
+        )
 
-    try:
-        data = response.json()
-    except Exception as e:
-        st.error(f"Error parsing JSON: {e}")
-        return "Error: could not parse AI response."
-
-    if "choices" not in data or not data["choices"]:
-        st.error(f"Unexpected AI response format: {data}")
-        return "Error: unexpected AI response."
-
+    data = response.json()
     return data["choices"][0]["message"]["content"].strip()
 
 
-def capture_location_stub():
-    # Placeholder for future geolocation
-    pass
-
-
-def build_base_prompt_header():
-    captured_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    lat = st.session_state.latitude
-    lon = st.session_state.longitude
-    acc = st.session_state.location_accuracy_m
-
-    if lat is not None and lon is not None:
-        location_line = f"Approximate location: {lat:.5f}, {lon:.5f} (±{acc or 0:.0f} m)"
-    else:
-        location_line = "Approximate location: [not captured]"
-
-    student_guess = st.session_state.student_guess.strip() or "[no name entered]"
-    nickname = st.session_state.student_nickname.strip()
-
-    label = st.session_state.specimen_label.strip() or "[none]"
-    notes = st.session_state.context_notes.strip() or "[none]"
-
-    header = f"""
-Student suggested name: {student_guess}
-Student nickname (if given; you may use it once): {nickname or "[none]"}
-Mode: {st.session_state.mode}
-Specimen label (instructor / lab use): {label}
-Capture time (approx): {captured_time}
-{location_line}
-Short notes from instructor (if any): {notes}
-""".strip()
-
-    return header
-
-
-# DEBUG version of start_simple_analysis
-def start_simple_analysis():
+def start_first_analysis():
     if not st.session_state.image_data_uri:
-        st.error("Please take or upload an image first.")
-        return
+        raise RuntimeError("Please upload an image first.")
 
-    st.write("DEBUG: start_simple_analysis called")
+    label = st.session_state.specimen_label.strip() or "No specimen label provided"
+    notes = st.session_state.context_notes.strip() or "No additional notes provided"
+    student_name = st.session_state.student_name.strip() or "[no name provided]"
+    observations = st.session_state.student_observations.strip() or "[none entered yet]"
+    best_answer = st.session_state.student_best_answer.strip() or "[none entered yet]"
+    known_name = st.session_state.known_name.strip() or "[none provided]"
 
-    base_header = build_base_prompt_header()
+    starter_prompt = f"""
+Please analyze the uploaded specimen image for a teaching app.
 
-    user_prompt_text = f"""
-{base_header}
+Selected mode: {st.session_state.mode}
+Specimen label: {label}
+Student/instructor notes: {notes}
+Student name (if given, use occasionally in a natural, non-repetitive way): {student_name}
+Student observations so far: {observations}
+Student best answer so far: {best_answer}
+Known name from instructor (if any): {known_name}
 
-Please:
-- Say in a few short sentences if the student's name seems close or not.
-- If close, say congratulations and give 1–3 simple reasons.
-- If not close, gently say so and give 1–2 reasons and one suggestion for a better photo or view.
-Keep everything very short and friendly.
+Your job:
+- Start with observation before interpretation.
+- If this is sand or granular material, explicitly address whether the visible grains appear well sorted or poorly sorted, whether quartz is likely, whether lithic grains may be present, and what cannot be determined confidently.
+- If the evidence does not support a strong ID, say so clearly.
+- Sound conversational and non-repetitive, as if you are talking with the student at the lab bench.
+- Use the full image for scale and any zoomed image(s) to inspect textures and fine details.
+- End with exactly one open-ended question that invites the student to make or refine an observation.
 """.strip()
 
-    messages = build_api_messages(user_prompt_text)
-    reply = call_perplexity(messages)
+    visible_user_text = (
+        f"Please analyze this uploaded specimen.\n\n"
+        f"Mode: {st.session_state.mode}\n"
+        f"Label: {label}\n"
+        f"Notes: {notes}"
+    )
 
-    st.write("DEBUG: reply received, updating session_state.last_ai_message")
+    st.session_state.api_history = [{"role": "user", "content": starter_prompt}]
+    st.session_state.display_messages = [
+        {"role": "user", "content": visible_user_text}
+    ]
 
-    st.session_state.last_ai_message = reply
+    reply = call_perplexity()
+
+    st.session_state.api_history.append({"role": "assistant", "content": reply})
+    st.session_state.display_messages.append({"role": "assistant", "content": reply})
     st.session_state.started = True
-    st.session_state.followup_history = []
 
 
-def send_followup(user_text: str):
+def send_followup(user_text):
     user_text = user_text.strip()
     if not user_text:
         return
-    if not st.session_state.image_data_uri:
-        st.error("Please take or upload an image first.")
-        return
 
-    base_header = build_base_prompt_header()
+    student_name = st.session_state.student_name.strip() or "[no name provided]"
+    observations = st.session_state.student_observations.strip() or "[none entered yet]"
+    best_answer = st.session_state.student_best_answer.strip() or "[none entered yet]"
+    known_name = st.session_state.known_name.strip() or "[none provided]"
 
-    follow_prompt = f"""
-This is a short follow-up question or comment from the student:
+    followup_prompt = f"""
+Student follow-up:
+{user_text}
 
-"{user_text}"
+Context:
+- Student name (if usable, mention naturally at most once per reply): {student_name}
+- Mode: {st.session_state.mode}
+- Specimen label: {st.session_state.specimen_label or "[none]"}
+- Student observations: {observations}
+- Student best answer: {best_answer}
+- Known name from instructor: {known_name}
+- Your earlier messages might include a guess that could be wrong.
 
-Context (do not repeat all of this, just use it quietly):
-{base_header}
-
-In one to three short sentences, respond in a very friendly way:
-- Refer to what the student just said.
-- Keep the focus on what they can see in the image.
-- You may suggest one next step (e.g., new angle, add scale, or compare with another sample).
-Stay very short and simple.
+Please answer as a conversational geology tutor.
+Stay grounded in the uploaded image and the student's words.
+If the student provides new observations or corrections, incorporate them honestly.
+If the new information or known name conflicts with your earlier idea, politely explain the mismatch and keep your observations honest to the image.
+Be concise (about 4–8 sentences), supportive, and vary your phrasing so it does not sound like a template.
+When helpful, refer the student to specific parts of the main image or the zoomed view (e.g., "look closely at the zoomed image where the grains touch").
+If the student asks for a summary or evaluation, provide it without a follow-up question.
+Otherwise, end with exactly one open-ended question that nudges the student toward a next observation or comparison.
 """.strip()
 
-    messages = build_api_messages(follow_prompt)
-    reply = call_perplexity(messages)
+    st.session_state.display_messages.append({"role": "user", "content": user_text})
+    st.session_state.api_history.append({"role": "user", "content": followup_prompt})
 
-    st.session_state.followup_history.append(("student", user_text))
-    st.session_state.followup_history.append(("assistant", reply))
-    st.session_state.last_ai_message = reply
+    reply = call_perplexity()
+
+    st.session_state.api_history.append({"role": "assistant", "content": reply})
+    st.session_state.display_messages.append({"role": "assistant", "content": reply})
 
 
-# ---------- Streamlit UI: GIAp (point-and-click student helper) ----------
+# ---------- GIAp UI: phone-friendly shell ----------
 
 st.set_page_config(
-    page_title="GIAp: Guided Image Analyzer (point and click)",
+    page_title="GIAp: Guided Image Analyzer",
     page_icon="🪨",
     layout="centered",
 )
 init_state()
 
-# Title
 st.title("GIAp: Guided Image Analyzer")
 st.caption("(point and click version)")
-st.caption("Give the sample a name, take a photo, tap analyze, and get a quick geology hint.")
+st.caption("Give the sample a name, take a photo, tap analyze, and chat about what you see.")
 
-# 1. Sample name just under title
-st.session_state.student_guess = st.text_input(
+# 1. Sample name (maps to student_best_answer)
+st.session_state.student_best_answer = st.text_input(
     "Sample name (your best guess)",
-    value=st.session_state.student_guess,
+    value=st.session_state.student_best_answer,
     placeholder="e.g., sandstone, basalt, quartz, shell fossil",
 )
 
 st.markdown("---")
 
-# 2. Take or upload photo (right under name)
+# 2. Take or upload photo (same pattern as GIA)
 st.subheader("Take or upload specimen photo")
 
 uploaded_file = st.file_uploader(
@@ -378,42 +371,38 @@ else:
 
 st.markdown("---")
 
-# 3. Analyze button next (DEBUG-wired)
-if st.button("Analyze sample", type="primary", use_container_width=True):
-    st.write("DEBUG: Analyze button clicked")
+# 3. Analyze sample button (calls the same engine as GIA)
+start_disabled = st.session_state.image_data_uri is None
+
+if st.button("Analyze sample", type="primary", use_container_width=True, disabled=start_disabled):
     try:
-        if not st.session_state.image_data_uri:
-            st.warning("Take or choose a photo first, then tap again.")
-        else:
-            start_simple_analysis()
+        start_first_analysis()
+        st.rerun()
     except Exception as e:
-        st.error(f"DEBUG: exception in analyze flow: {e}")
+        st.error(str(e))
 
 st.markdown("---")
 
-# 4. Output
+# 4. Output (shows the latest AI + history summary style)
 st.subheader("Output")
 
-if not st.session_state.last_ai_message:
+if not st.session_state.display_messages:
     st.info("After you take a photo and tap **Analyze sample**, feedback will appear here.")
 else:
-    st.markdown(st.session_state.last_ai_message)
-
-    if st.session_state.followup_history:
-        st.markdown("**Follow-up chat so far:**")
-        for role, text in st.session_state.followup_history:
-            if role == "student":
-                st.markdown(f"*You:* {text}")
-            else:
-                st.markdown(f"*Helper:* {text}")
+    # Show only the last assistant message as the main output
+    last_assistant = [m for m in st.session_state.display_messages if m["role"] == "assistant"]
+    if last_assistant:
+        st.markdown(last_assistant[-1]["content"])
+    else:
+        st.markdown(st.session_state.display_messages[-1]["content"])
 
 st.markdown("---")
 
-# 5. Follow-up chat
+# 5. Follow-up chat (uses same send_followup as GIA, but with a single input)
 st.subheader("Follow-up chat")
 
-if not st.session_state.image_data_uri:
-    st.info("Take or upload a photo first, then analyze before using follow-up.")
+if not st.session_state.started:
+    st.info("Analyze at least one sample before using follow-up chat.")
 else:
     followup = st.text_input(
         "Ask a quick question or add a short comment",
@@ -423,8 +412,9 @@ else:
     if st.button("Send follow-up", use_container_width=True):
         try:
             send_followup(followup)
+            st.rerun()
         except Exception as e:
-            st.error(f"DEBUG: exception in follow-up flow: {e}")
+            st.error(str(e))
 
 st.markdown("---")
 
@@ -435,7 +425,7 @@ if st.button("Clear app", use_container_width=True):
 
 st.markdown("---")
 
-# 7. Advanced features at the bottom
+# 7. Advanced (instructor / power user) at bottom
 with st.expander("Advanced (instructor / power user)", expanded=False):
     st.session_state.model = st.text_input(
         "Perplexity model",
@@ -480,4 +470,9 @@ with st.expander("Advanced (instructor / power user)", expanded=False):
         value=st.session_state.context_notes,
         height=80,
         placeholder="e.g., hand lens view, indoor light, no scale bar",
+    )
+    st.session_state.student_name = st.text_input(
+        "Student name (optional)",
+        value=st.session_state.student_name,
+        placeholder="e.g., Alex",
     )
