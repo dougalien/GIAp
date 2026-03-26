@@ -25,6 +25,7 @@ def init_state():
         # Simple student flow
         "student_guess": "",
         "student_nickname": "",
+        "followup_history": [],
         # Hidden / instructor
         "mode": "Auto",
         "model": DEFAULT_MODEL,
@@ -36,7 +37,7 @@ def init_state():
         "latitude": None,
         "longitude": None,
         "location_accuracy_m": None,
-        # API history (minimal, kept for possible future use)
+        # Internal
         "api_history": [],
     }
     for k, v in defaults.items():
@@ -165,7 +166,7 @@ You are a very concise, friendly geology helper for an introductory lab app in 2
 Your job:
 - Look at each image and give just a few clear observations that a beginner can see.
 - Compare those observations to the student's suggested name.
-- If the student's name is probably right, say "Congratulations" or something similar, then briefly explain 1–3 reasons why it fits.
+- If the student's name is probably right, say "Congratulations" or similar, then briefly explain 1–3 reasons why it fits.
 - If the name is probably wrong or too specific, say kindly that it may not match and suggest 1–2 visible reasons why, in simple language.
 - Always keep the tone supportive and short. Avoid long paragraphs.
 - Suggest exactly one simple next step if the image is hard to read (e.g., better light, different angle, add a scale like a coin or ruler).
@@ -215,13 +216,11 @@ def call_perplexity(messages):
 
 
 def capture_location_stub():
-    st.info("Location tagging not available in this build.")
+    # Placeholder for future geolocation
+    pass
 
 
-def start_simple_analysis():
-    if not st.session_state.image_data_uri:
-        raise RuntimeError("Please take or upload an image first.")
-
+def build_base_prompt_header():
     captured_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lat = st.session_state.latitude
     lon = st.session_state.longitude
@@ -238,7 +237,7 @@ def start_simple_analysis():
     label = st.session_state.specimen_label.strip() or "[none]"
     notes = st.session_state.context_notes.strip() or "[none]"
 
-    user_prompt_text = f"""
+    header = f"""
 Student suggested name: {student_guess}
 Student nickname (if given; you may use it once): {nickname or "[none]"}
 Mode: {st.session_state.mode}
@@ -246,6 +245,19 @@ Specimen label (instructor / lab use): {label}
 Capture time (approx): {captured_time}
 {location_line}
 Short notes from instructor (if any): {notes}
+""".strip()
+
+    return header
+
+
+def start_simple_analysis():
+    if not st.session_state.image_data_uri:
+        raise RuntimeError("Please take or upload an image first.")
+
+    base_header = build_base_prompt_header()
+
+    user_prompt_text = f"""
+{base_header}
 
 Please:
 - Say in a few short sentences if the student's name seems close or not.
@@ -259,21 +271,144 @@ Keep everything very short and friendly.
 
     st.session_state.last_ai_message = reply
     st.session_state.started = True
+    st.session_state.followup_history = []
+
+
+def send_followup(user_text: str):
+    user_text = user_text.strip()
+    if not user_text:
+        return
+    if not st.session_state.image_data_uri:
+        raise RuntimeError("Please take or upload an image first.")
+
+    base_header = build_base_prompt_header()
+
+    follow_prompt = f"""
+This is a short follow-up question or comment from the student:
+
+"{user_text}"
+
+Context (do not repeat all of this, just use it quietly):
+{base_header}
+
+In one to three short sentences, respond in a very friendly way:
+- Refer to what the student just said.
+- Keep the focus on what they can see in the image.
+- You may suggest one next step (e.g., new angle, add scale, or compare with another sample).
+Stay very short and simple.
+""".strip()
+
+    messages = build_api_messages(follow_prompt)
+    reply = call_perplexity(messages)
+
+    st.session_state.followup_history.append(("student", user_text))
+    st.session_state.followup_history.append(("assistant", reply))
+    st.session_state.last_ai_message = reply
 
 
 # ---------- Streamlit UI: GIAp (point-and-click student helper) ----------
 
 st.set_page_config(
     page_title="GIAp: Point & Click Geology Helper",
-    page_icon="📱",
+    page_icon="🪨",
     layout="centered",
 )
 init_state()
 
-st.title("📱 GIAp: Point & Click Geology Helper")
-st.caption("Aim at a specimen, tap once, and get a short geology hint.")
+# Title (single line, no phone emoji)
+st.title("GIAp: Point & Click Geology Helper")
+st.caption("Give the sample a name, tap analyze, and get a quick geology hint.")
 
-with st.expander("Instructor / advanced options", expanded=False):
+# Sample name just below title
+st.session_state.student_guess = st.text_input(
+    "Sample name (your best guess)",
+    value=st.session_state.student_guess,
+    placeholder="e.g., sandstone, basalt, quartz, shell fossil",
+)
+
+# Main analyze button (uses existing image; image capture is via uploader below)
+if st.button("Analyze sample", type="primary", use_container_width=True):
+    try:
+        if not st.session_state.image_data_uri:
+            st.warning("Scroll down to take or choose a photo first, then tap again.")
+        else:
+            start_simple_analysis()
+            st.experimental_rerun()
+    except Exception as e:
+        st.error(str(e))
+
+st.markdown("---")
+
+# Output directly under the button
+st.subheader("Output")
+
+if not st.session_state.last_ai_message:
+    st.info("After you take a photo and tap **Analyze sample**, feedback will appear here.")
+else:
+    st.markdown(st.session_state.last_ai_message)
+
+    if st.session_state.followup_history:
+        st.markdown("**Follow-up chat so far:**")
+        for role, text in st.session_state.followup_history:
+            if role == "student":
+                st.markdown(f"*You:* {text}")
+            else:
+                st.markdown(f"*Helper:* {text}")
+
+# Follow-up chat box
+st.markdown("---")
+st.subheader("Follow-up chat")
+
+if not st.session_state.image_data_uri:
+    st.info("Take or upload a photo first, then analyze before using follow-up.")
+else:
+    followup = st.text_input(
+        "Ask a quick question or add a short comment",
+        value="",
+        placeholder="e.g., What should I change to make this clearer?",
+    )
+    if st.button("Send follow-up", use_container_width=True):
+        try:
+            send_followup(followup)
+            st.experimental_rerun()
+        except Exception as e:
+            st.error(str(e))
+
+st.markdown("---")
+
+# Optional photo upload
+st.subheader("Take or upload specimen photo")
+
+uploaded_file = st.file_uploader(
+    "Tap here to take a photo or choose from your library",
+    type=["png", "jpg", "jpeg", "webp"],
+    accept_multiple_files=False,
+)
+
+if uploaded_file is not None:
+    update_uploaded_image(uploaded_file)
+    st.experimental_rerun()
+
+if st.session_state.image_bytes:
+    st.image(
+        st.session_state.image_bytes,
+        caption=st.session_state.image_name or "Specimen image",
+        use_container_width=True,
+    )
+else:
+    st.info("No specimen image yet.")
+
+st.markdown("---")
+
+# Clear app button
+if st.button("Clear app", use_container_width=True):
+    reset_app()
+    st.experimental_rerun()
+
+st.markdown("---")
+
+# Advanced features at the very bottom
+with st.expander("Advanced (instructor / power user)", expanded=False):
     st.session_state.model = st.text_input(
         "Perplexity model",
         value=st.session_state.model,
@@ -318,91 +453,3 @@ with st.expander("Instructor / advanced options", expanded=False):
         height=80,
         placeholder="e.g., hand lens view, indoor light, no scale bar",
     )
-
-st.markdown("---")
-
-# 1. Analyze button at the top
-st.subheader("Tap to analyze")
-
-if st.button(
-    "📷 Analyze sample",
-    type="primary",
-    use_container_width=True,
-):
-    try:
-        if not st.session_state.image_data_uri:
-            st.warning("First, take a photo or choose one below, then tap again.")
-        else:
-            start_simple_analysis()
-            st.experimental_rerun()
-    except Exception as e:
-        st.error(str(e))
-
-st.markdown("---")
-
-# 2. Current specimen and name
-st.subheader("Current specimen")
-
-if st.session_state.image_bytes:
-    st.image(
-        st.session_state.image_bytes,
-        caption=st.session_state.image_name or "Specimen image",
-        use_container_width=True,
-    )
-else:
-    st.info("No specimen yet. Take or choose a photo below.")
-
-st.subheader("Your best name for this specimen")
-st.session_state.student_guess = st.text_input(
-    "Sample name (your best guess)",
-    value=st.session_state.student_guess,
-    placeholder="e.g., sandstone, basalt, quartz, shell fossil",
-)
-
-with st.expander("Optional: your nickname", expanded=False):
-    st.session_state.student_nickname = st.text_input(
-        "Nickname (the helper may use this once)",
-        value=st.session_state.student_nickname,
-        placeholder="e.g., Alex",
-    )
-
-st.markdown("---")
-
-# 3. Photo uploader, then (stub) location
-st.subheader("Take or choose a photo")
-
-uploaded_file = st.file_uploader(
-    "Tap to take a photo or choose from your library",
-    type=["png", "jpg", "jpeg", "webp"],
-    accept_multiple_files=False,
-)
-
-if uploaded_file is not None:
-    update_uploaded_image(uploaded_file)
-    st.experimental_rerun()
-
-st.markdown("#### Optional: tag this specimen with your location")
-
-if st.button("📍 Get my location", use_container_width=True):
-    try:
-        capture_location_stub()
-    except Exception as e:
-        st.error(str(e))
-
-st.markdown("---")
-
-# 4. Feedback
-st.subheader("Quick feedback")
-
-if not st.session_state.last_ai_message:
-    st.info("Take a photo, enter your best name, then tap **Analyze sample**.")
-else:
-    st.markdown(st.session_state.last_ai_message)
-    st.markdown("")
-    st.caption("Try another angle, better light, or a scale bar, then tap again.")
-
-st.markdown("---")
-
-if st.button("Reset GIAp", use_container_width=True):
-    reset_app()
-    st.experimental_rerun()
