@@ -189,10 +189,12 @@ def build_api_messages(user_prompt_text):
     return messages
 
 
+# DEBUG version of call_perplexity
 def call_perplexity(messages):
     api_key = get_api_key()
     if not api_key:
-        raise RuntimeError("Missing PERPLEXITY_API_KEY in your environment.")
+        st.error("Missing PERPLEXITY_API_KEY in your environment.")
+        return "Error: no API key set."
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -204,14 +206,30 @@ def call_perplexity(messages):
         "messages": messages,
     }
 
-    response = requests.post(API_URL, headers=headers, json=payload, timeout=180)
+    st.write("DEBUG: sending request to Perplexity...")
+
+    try:
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=180)
+    except Exception as e:
+        st.error(f"Request error: {e}")
+        return "Error: request to AI failed."
+
+    st.write(f"DEBUG: HTTP status {response.status_code}")
 
     if response.status_code != 200:
-        raise RuntimeError(
-            f"Perplexity error {response.status_code}: {response.text[:2000]}"
-        )
+        st.error(f"Perplexity error {response.status_code}: {response.text[:300]}")
+        return f"Error: AI returned status {response.status_code}."
 
-    data = response.json()
+    try:
+        data = response.json()
+    except Exception as e:
+        st.error(f"Error parsing JSON: {e}")
+        return "Error: could not parse AI response."
+
+    if "choices" not in data or not data["choices"]:
+        st.error(f"Unexpected AI response format: {data}")
+        return "Error: unexpected AI response."
+
     return data["choices"][0]["message"]["content"].strip()
 
 
@@ -250,9 +268,13 @@ Short notes from instructor (if any): {notes}
     return header
 
 
+# DEBUG version of start_simple_analysis
 def start_simple_analysis():
     if not st.session_state.image_data_uri:
-        raise RuntimeError("Please take or upload an image first.")
+        st.error("Please take or upload an image first.")
+        return
+
+    st.write("DEBUG: start_simple_analysis called")
 
     base_header = build_base_prompt_header()
 
@@ -269,6 +291,8 @@ Keep everything very short and friendly.
     messages = build_api_messages(user_prompt_text)
     reply = call_perplexity(messages)
 
+    st.write("DEBUG: reply received, updating session_state.last_ai_message")
+
     st.session_state.last_ai_message = reply
     st.session_state.started = True
     st.session_state.followup_history = []
@@ -279,7 +303,8 @@ def send_followup(user_text: str):
     if not user_text:
         return
     if not st.session_state.image_data_uri:
-        raise RuntimeError("Please take or upload an image first.")
+        st.error("Please take or upload an image first.")
+        return
 
     base_header = build_base_prompt_header()
 
@@ -353,15 +378,16 @@ else:
 
 st.markdown("---")
 
-# 3. Analyze button next
+# 3. Analyze button next (DEBUG-wired)
 if st.button("Analyze sample", type="primary", use_container_width=True):
+    st.write("DEBUG: Analyze button clicked")
     try:
         if not st.session_state.image_data_uri:
             st.warning("Take or choose a photo first, then tap again.")
         else:
-            start_simple_analysis()  # no st.rerun() here
+            start_simple_analysis()
     except Exception as e:
-        st.error(str(e))
+        st.error(f"DEBUG: exception in analyze flow: {e}")
 
 st.markdown("---")
 
@@ -396,9 +422,9 @@ else:
     )
     if st.button("Send follow-up", use_container_width=True):
         try:
-            send_followup(followup)  # no st.rerun() here
+            send_followup(followup)
         except Exception as e:
-            st.error(str(e))
+            st.error(f"DEBUG: exception in follow-up flow: {e}")
 
 st.markdown("---")
 
