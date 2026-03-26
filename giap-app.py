@@ -20,13 +20,13 @@ def init_state():
         "image_bytes": None,
         "image_mime": None,
         "image_data_uri": None,
+        "last_uploaded_signature": None,
         "display_messages": [],
         "api_history": [],
         "mode": "Auto",
         "context_notes": "",
         "specimen_label": "",
         "model": DEFAULT_MODEL,
-        "last_uploaded_signature": None,
         # Tutoring flow
         "student_observations": "",
         "student_best_answer": "",
@@ -235,7 +235,8 @@ def call_perplexity(messages=None):
 
 def start_first_analysis():
     if not st.session_state.image_data_uri:
-        raise RuntimeError("Please upload an image first.")
+        st.warning("Please upload an image first.")
+        return
 
     label = st.session_state.specimen_label.strip() or "No specimen label provided"
     notes = st.session_state.context_notes.strip() or "No additional notes provided"
@@ -338,7 +339,7 @@ st.title("GIAp: Guided Image Analyzer")
 st.caption("(point and click version)")
 st.caption("Give the sample a name, take a photo, tap analyze, and chat about what you see.")
 
-# 1. Sample name (maps to student_best_answer)
+# 1. Sample name → student_best_answer
 st.session_state.student_best_answer = st.text_input(
     "Sample name (your best guess)",
     value=st.session_state.student_best_answer,
@@ -347,7 +348,7 @@ st.session_state.student_best_answer = st.text_input(
 
 st.markdown("---")
 
-# 2. Take or upload photo (same pattern as GIA)
+# 2. Take or upload photo
 st.subheader("Take or upload specimen photo")
 
 uploaded_file = st.file_uploader(
@@ -371,10 +372,8 @@ else:
 
 st.markdown("---")
 
-# 3. Analyze sample button (calls the same engine as GIA)
-start_disabled = st.session_state.image_data_uri is None
-
-if st.button("Analyze sample", type="primary", use_container_width=True, disabled=start_disabled):
+# 3. Analyze sample (always enabled, warns if no image)
+if st.button("Analyze sample", type="primary", use_container_width=True):
     try:
         start_first_analysis()
         st.rerun()
@@ -383,13 +382,12 @@ if st.button("Analyze sample", type="primary", use_container_width=True, disable
 
 st.markdown("---")
 
-# 4. Output (shows the latest AI + history summary style)
+# 4. Output: show last assistant message
 st.subheader("Output")
 
 if not st.session_state.display_messages:
     st.info("After you take a photo and tap **Analyze sample**, feedback will appear here.")
 else:
-    # Show only the last assistant message as the main output
     last_assistant = [m for m in st.session_state.display_messages if m["role"] == "assistant"]
     if last_assistant:
         st.markdown(last_assistant[-1]["content"])
@@ -398,7 +396,7 @@ else:
 
 st.markdown("---")
 
-# 5. Follow-up chat (uses same send_followup as GIA, but with a single input)
+# 5. Follow-up chat (simple one-line input)
 st.subheader("Follow-up chat")
 
 if not st.session_state.started:
@@ -425,7 +423,7 @@ if st.button("Clear app", use_container_width=True):
 
 st.markdown("---")
 
-# 7. Advanced (instructor / power user) at bottom
+# 7. Advanced at bottom
 with st.expander("Advanced (instructor / power user)", expanded=False):
     st.session_state.model = st.text_input(
         "Perplexity model",
