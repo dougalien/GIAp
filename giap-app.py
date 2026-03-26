@@ -30,6 +30,9 @@ def init_state():
         "student_best_answer": "",
         "known_name": "",
         "student_name": "",
+        # Vision options
+        "include_auto_zoom": True,
+        "zoom_fraction": 0.5,
         # First reply anchor
         "first_reply": "",
         # Follow-up UI
@@ -89,37 +92,57 @@ def update_uploaded_image(uploaded_file):
 
 
 def get_image_contents_for_api():
-    if not st.session_state.image_bytes:
+    if not st.session_state.image_bytes or not st.session_state.image_data_uri:
         return []
 
+    # Full-frame view
+    contents = [
+        {
+            "type": "image_url",
+            "image_url": {"url": st.session_state.image_data_uri},
+        }
+    ]
+
+    if not st.session_state.include_auto_zoom:
+        return contents
+
+    # Center crop zoom for texture / fossil detail
     try:
         img = Image.open(BytesIO(st.session_state.image_bytes))
-        img.thumbnail((768, 768))
+        w, h = img.size
+        frac = st.session_state.zoom_fraction
+        frac = max(0.1, min(frac, 1.0))
+
+        cw, ch = int(w * frac), int(h * frac)
+        left = (w - cw) // 2
+        top = (h - ch) // 2
+        right = left + cw
+        bottom = top + ch
+        crop_center = img.crop((left, top, right, bottom))
 
         buf = BytesIO()
-        fmt = img.format if img.format in ["JPEG", "PNG", "WEBP"] else "JPEG"
-        img.save(buf, format=fmt, quality=80)
-        resized_bytes = buf.getvalue()
-
-        b64 = base64.b64encode(resized_bytes).decode("utf-8")
+        fmt = img.format if img.format in ["JPEG", "PNG", "WEBP"] else "PNG"
+        crop_center.save(buf, format=fmt)
+        crop_bytes = buf.getvalue()
+        b64 = base64.b64encode(crop_bytes).decode("utf-8")
         mime = {
             "JPEG": "image/jpeg",
             "JPG": "image/jpeg",
             "PNG": "image/png",
             "WEBP": "image/webp",
-        }.get(fmt, "image/jpeg")
-        data_uri = f"data:{mime};base64,{b64}"
-    except Exception:
-        data_uri = st.session_state.image_data_uri
-        if not data_uri:
-            return []
+        }.get(fmt, "image/png")
+        crop_data_uri = f"data:{mime};base64,{b64}"
 
-    return [
-        {
-            "type": "image_url",
-            "image_url": {"url": data_uri},
-        }
-    ]
+        contents.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": crop_data_uri},
+            }
+        )
+    except Exception:
+        pass
+
+    return contents
 
 
 def build_system_prompt(mode: str):
@@ -136,14 +159,16 @@ def build_system_prompt(mode: str):
 You are a friendly, concise geology tutor for an intro lab.
 
 For each specimen image, your job is:
-1) First sentence: say clearly if the student's name is probably right, close, or not a good match for what you SEE.
-2) Second sentence: give 1–2 very short reasons based only on visible features (color, grain size, texture, layering, etc.).
-3) Third sentence: one short suggestion for a better photo or a simple next check (e.g., look for layering, check grain size, zoom in on crystals).
+1) First sentence: briefly describe what you SEE (overall shape, symmetry, segments or layers, grain size, obvious shell or exoskeleton, etc.).
+2) Second sentence: say clearly if the student's name is probably right, close, or not a good match for what you see.
+3) Third sentence: one short suggestion for a better photo angle or a simple next check (e.g., look for layering, check grain size, zoom in on crystals).
 
 Rules:
 - Maximum 3 short sentences total. No paragraphs, no bullet lists.
 - Use plain words; assume a 100-level course.
 - Be honest and cautious. If the ID is uncertain, say that clearly.
+- Only say the photo is "not clear" if it is obviously blurry, extremely dark, washed out by glare, or so cropped that the main shape is cut off.
+- If the fossil or rock appears sharp and well lit, say the image is clear but the identification is still uncertain, and suggest a next check instead of asking for a new photo.
 - Stay grounded in the image. Do not invent properties you cannot see (like hardness or streak).
 - If an instructor's known name is provided and the photo is ambiguous, treat that as the best label and use the image as support for teaching.
 
@@ -221,8 +246,7 @@ Student name (optional, use casually at most once): {student_name}
 Current mode: {mode}
 
 Follow the 3-sentence format from your system instructions.
-Keep it short, clear, and focused on what a beginning student can actually see.
-If the photo is ambiguous, say so and lean on the instructor's known name as the best label.
+If the photo is sharp and well lit but you still are not confident, say the image is clear but the ID is uncertain, and recommend a simple next observation or lab test.
 """.strip()
 
     messages = build_initial_messages(user_text)
@@ -436,7 +460,7 @@ with st.container():
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# 5. Follow-up question (anchored, text-only)
+# 5. Follow-up question
 st.markdown("### 5. Follow-up question")
 with st.container():
     st.markdown('<div class="gia-section">', unsafe_allow_html=True)
@@ -501,6 +525,18 @@ with st.expander("Advanced (instructor / power user)", expanded=False):
         else 0,
         help="Use Auto for most lab work.",
     )
+    st.session_state.include_auto_zoom = st.checkbox(
+        "Send a zoomed-in center crop",
+        value=st.session_state.include_auto_zoom,
+        help="Helps the AI see fine textures and fossil details.",
+    )
+    st.session_state.zoom_fraction = st.slider(
+        "Zoom size (fraction of image)",
+        min_value=0.2,
+        max_value=0.8,
+        value=float(st.session_state.zoom_fraction),
+        step=0.1,
+    )
     st.session_state.context_notes = st.text_area(
         "Short context notes (optional)",
         value=st.session_state.context_notes,
@@ -510,7 +546,7 @@ with st.expander("Advanced (instructor / power user)", expanded=False):
     st.session_state.known_name = st.text_input(
         "Known name from instructor (optional)",
         value=st.session_state.known_name,
-        placeholder="e.g., coarse sandstone, garnet schist, gypsum",
+        placeholder="e.g., trilobite fossil, garnet schist, gypsum",
     )
     st.session_state.student_name = st.text_input(
         "Student name (optional)",
