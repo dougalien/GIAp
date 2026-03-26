@@ -160,6 +160,7 @@ Rules:
 Mode hint: {mode_guidance.get(mode, mode_guidance["Auto"])}
 """.strip()
 
+
 def build_api_messages():
     messages = [{"role": "system", "content": build_system_prompt(st.session_state.mode)}]
 
@@ -205,8 +206,15 @@ def call_perplexity(messages=None):
 
 
 def start_first_analysis():
+    # If bytes exist but data_uri not set yet, image is still loading
+    if st.session_state.image_bytes and not st.session_state.image_data_uri:
+        st.warning(
+            "Photo is still loading. Wait until the preview appears, then tap Analyze again."
+        )
+        return
+
     if not st.session_state.image_data_uri:
-        st.warning("Please upload an image first.")
+        st.warning("Please upload a photo first, then tap Analyze.")
         return
 
     label = st.session_state.specimen_label.strip() or "No specimen label provided"
@@ -217,23 +225,18 @@ def start_first_analysis():
     known_name = st.session_state.known_name.strip() or "[none provided]"
 
     starter_prompt = f"""
-Please analyze the uploaded specimen image for a teaching app.
+Student's best name for this specimen: {best_answer}
 
-Selected mode: {st.session_state.mode}
-Specimen label: {label}
-Student/instructor notes: {notes}
-Student name (if given, use occasionally in a natural, non-repetitive way): {student_name}
-Student observations so far: {observations}
-Student best answer so far: {best_answer}
+Please look at the image and:
+1) In the very first sentence, say clearly if this name is probably right, close, or not a good match.
+2) Give 1–2 very short reasons based only on visible features (color, texture, shape, layering, etc.).
+3) Give exactly one very short suggestion for a better photo or next check.
+
+Keep the total answer to 3 short sentences maximum.
+Sound like a friendly coach, not a textbook.
+Mode: {st.session_state.mode}
 Known name from instructor (if any): {known_name}
-
-Your job:
-- Start with observation before interpretation.
-- If this is sand or granular material, explicitly address whether the visible grains appear well sorted or poorly sorted, whether quartz is likely, whether lithic grains may be present, and what cannot be determined confidently.
-- If the evidence does not support a strong ID, say so clearly.
-- Sound conversational and non-repetitive, as if you are talking with the student at the lab bench.
-- Use the full image for scale and any zoomed image(s) to inspect textures and fine details.
-- End with exactly one open-ended question that invites the student to make or refine an observation.
+Extra notes (optional): {notes}
 """.strip()
 
     visible_user_text = (
@@ -280,12 +283,8 @@ Context:
 
 Please answer as a conversational geology tutor.
 Stay grounded in the uploaded image and the student's words.
-If the student provides new observations or corrections, incorporate them honestly.
-If the new information or known name conflicts with your earlier idea, politely explain the mismatch and keep your observations honest to the image.
-Be concise (about 4–8 sentences), supportive, and vary your phrasing so it does not sound like a template.
-When helpful, refer the student to specific parts of the main image or the zoomed view (e.g., "look closely at the zoomed image where the grains touch").
-If the student asks for a summary or evaluation, provide it without a follow-up question.
-Otherwise, end with exactly one open-ended question that nudges the student toward a next observation or comparison.
+Keep your reply short (2–4 short sentences) and focus on what they can SEE.
+End with one short question that nudges them toward a next simple observation.
 """.strip()
 
     st.session_state.display_messages.append({"role": "user", "content": user_text})
@@ -343,8 +342,13 @@ else:
 
 st.markdown("---")
 
-# 3. Analyze sample (always enabled, warns if no image)
-if st.button("Analyze sample", type="primary", use_container_width=True):
+# 3. Analyze sample with loading guard
+uploading = st.session_state.image_bytes and not st.session_state.image_data_uri
+
+if uploading:
+    st.info("Photo is still loading. Wait until the preview appears, then tap Analyze.")
+
+if st.button("Analyze sample", type="primary", use_container_width=True, disabled=uploading):
     try:
         start_first_analysis()
         st.rerun()
