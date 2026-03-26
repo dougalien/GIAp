@@ -342,13 +342,8 @@ else:
 
 st.markdown("---")
 
-# 3. Analyze sample with loading guard
-uploading = st.session_state.image_bytes and not st.session_state.image_data_uri
-
-if uploading:
-    st.info("Photo is still loading. Wait until the preview appears, then tap Analyze.")
-
-if st.button("Analyze sample", type="primary", use_container_width=True, disabled=uploading):
+# 3. Analyze sample (no disabled=, just guard in start_first_analysis)
+if st.button("Analyze sample", type="primary", use_container_width=True):
     try:
         start_first_analysis()
         st.rerun()
