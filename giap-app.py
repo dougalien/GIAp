@@ -344,8 +344,13 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
+    st.write(f"DEBUG: uploaded_file name={uploaded_file.name}, size={uploaded_file.size}")
     update_uploaded_image(uploaded_file)
-    st.rerun()
+    # IMPORTANT: remove rerun so we can see state right after upload
+    # st.rerun()
+
+st.write(f"DEBUG: image_bytes is {'set' if bool(st.session_state.image_bytes) else 'None'}")
+st.write(f"DEBUG: image_data_uri is {'set' if bool(st.session_state.image_data_uri) else 'None'}")
 
 if st.session_state.image_bytes:
     st.image(
@@ -355,8 +360,6 @@ if st.session_state.image_bytes:
     )
 else:
     st.info("No specimen image yet. Take or choose a photo above.")
-
-st.markdown("---")
 
 # 3. Analyze sample (guard is inside start_first_analysis)
 if st.button("Analyze sample", type="primary", use_container_width=True):
