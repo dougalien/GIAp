@@ -316,7 +316,8 @@ st.set_page_config(
 init_state()
 
 # Title (single line, no phone emoji)
-st.title("GIAp: Point & Click Geology Helper")
+st.title("GIAp: Guided Image Analyzer")
+st.caption("(point and click version)")
 st.caption("Give the sample a name, tap analyze, and get a quick geology hint.")
 
 # Sample name just below title
