@@ -7,7 +7,7 @@ from datetime import datetime
 import requests
 import streamlit as st
 from PIL import Image
-from streamlit_geolocation import streamlit_geolocation  # pip install streamlit-geolocation [web:4]
+from streamlit_geolocation import streamlit_geolocation  
 
 API_URL = "https://api.perplexity.ai/chat/completions"
 DEFAULT_MODEL = "sonar-pro"
