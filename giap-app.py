@@ -7,7 +7,6 @@ from datetime import datetime
 import requests
 import streamlit as st
 from PIL import Image
-from streamlit_geolocation import streamlit_geolocation  
 
 API_URL = "https://api.perplexity.ai/chat/completions"
 DEFAULT_MODEL = "sonar-pro"
@@ -33,11 +32,11 @@ def init_state():
         "context_notes": "",
         "include_auto_zoom": True,
         "zoom_fraction": 0.5,
-        # Geo
+        # Geo (stubbed for now)
         "latitude": None,
         "longitude": None,
         "location_accuracy_m": None,
-        # API history (minimal, used just to send context)
+        # API history (minimal, kept for possible future use)
         "api_history": [],
     }
     for k, v in defaults.items():
@@ -182,16 +181,14 @@ Domain instructions:
 
 def build_api_messages(user_prompt_text):
     messages = [{"role": "system", "content": build_system_prompt(st.session_state.mode)}]
-
     content = [{"type": "text", "text": user_prompt_text}]
     images = get_image_contents_for_api()
     content.extend(images)
     messages.append({"role": "user", "content": content})
-
     return messages
 
 
-def call_perplexity(messages=None):
+def call_perplexity(messages):
     api_key = get_api_key()
     if not api_key:
         raise RuntimeError("Missing PERPLEXITY_API_KEY in your environment.")
@@ -200,9 +197,6 @@ def call_perplexity(messages=None):
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-
-    if messages is None:
-        raise RuntimeError("Messages required for API call.")
 
     payload = {
         "model": st.session_state.model,
@@ -220,25 +214,11 @@ def call_perplexity(messages=None):
     return data["choices"][0]["message"]["content"].strip()
 
 
-def capture_location():
-    loc = streamlit_geolocation()
-    if loc and loc.get("latitude") and loc.get("longitude"):
-        st.session_state.latitude = loc["latitude"]
-        st.session_state.longitude = loc["longitude"]
-        st.session_state.location_accuracy_m = loc.get("accuracy")
-        st.success(
-            f"Location captured: "
-            f"{loc['latitude']:.5f}, {loc['longitude']:.5f} "
-            f"(±{loc.get('accuracy', 0):.0f} m)"
-        )
-    else:
-        st.info("Tap the location button again if you want to tag this specimen.")
+def capture_location_stub():
+    st.info("Location tagging not available in this build.")
 
 
-def start_simple_analysis(uploaded_file=None):
-    if uploaded_file is not None:
-        update_uploaded_image(uploaded_file)
-
+def start_simple_analysis():
     if not st.session_state.image_data_uri:
         raise RuntimeError("Please take or upload an image first.")
 
@@ -341,16 +321,27 @@ with st.expander("Instructor / advanced options", expanded=False):
 
 st.markdown("---")
 
-st.subheader("1. Take or choose a specimen photo")
+# 1. Analyze button at the top
+st.subheader("Tap to analyze")
 
-uploaded_file = st.file_uploader(
-    "Tap here to take a photo or choose from your library",
-    type=["png", "jpg", "jpeg", "webp"],
-    accept_multiple_files=False,
-)
+if st.button(
+    "📷 Analyze sample",
+    type="primary",
+    use_container_width=True,
+):
+    try:
+        if not st.session_state.image_data_uri:
+            st.warning("First, take a photo or choose one below, then tap again.")
+        else:
+            start_simple_analysis()
+            st.experimental_rerun()
+    except Exception as e:
+        st.error(str(e))
 
-if uploaded_file is not None:
-    update_uploaded_image(uploaded_file)
+st.markdown("---")
+
+# 2. Current specimen and name
+st.subheader("Current specimen")
 
 if st.session_state.image_bytes:
     st.image(
@@ -358,18 +349,10 @@ if st.session_state.image_bytes:
         caption=st.session_state.image_name or "Specimen image",
         use_container_width=True,
     )
+else:
+    st.info("No specimen yet. Take or choose a photo below.")
 
-st.markdown("#### Optional: tag this specimen with your location")
-if st.button("📍 Get my location", use_container_width=True):
-    try:
-        capture_location()
-    except Exception as e:
-        st.error(str(e))
-
-st.markdown("---")
-
-st.subheader("2. Your best name for this specimen")
-
+st.subheader("Your best name for this specimen")
 st.session_state.student_guess = st.text_input(
     "Sample name (your best guess)",
     value=st.session_state.student_guess,
@@ -385,29 +368,36 @@ with st.expander("Optional: your nickname", expanded=False):
 
 st.markdown("---")
 
-can_analyze = st.session_state.image_data_uri is not None
+# 3. Photo uploader, then (stub) location
+st.subheader("Take or choose a photo")
 
-if st.button(
-    "📷 Capture & analyze",
-    type="primary",
-    disabled=not can_analyze,
-    use_container_width=True,
-):
+uploaded_file = st.file_uploader(
+    "Tap to take a photo or choose from your library",
+    type=["png", "jpg", "jpeg", "webp"],
+    accept_multiple_files=False,
+)
+
+if uploaded_file is not None:
+    update_uploaded_image(uploaded_file)
+    st.experimental_rerun()
+
+st.markdown("#### Optional: tag this specimen with your location")
+
+if st.button("📍 Get my location", use_container_width=True):
     try:
-        start_simple_analysis(uploaded_file=None)
-        st.experimental_rerun()
+        capture_location_stub()
     except Exception as e:
         st.error(str(e))
 
 st.markdown("---")
 
-st.subheader("3. Quick feedback")
+# 4. Feedback
+st.subheader("Quick feedback")
 
 if not st.session_state.last_ai_message:
-    st.info("Take a photo, enter your best name, then tap **Capture & analyze**.")
+    st.info("Take a photo, enter your best name, then tap **Analyze sample**.")
 else:
     st.markdown(st.session_state.last_ai_message)
-
     st.markdown("")
     st.caption("Try another angle, better light, or a scale bar, then tap again.")
 
