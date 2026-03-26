@@ -7,10 +7,10 @@ from datetime import datetime
 import requests
 import streamlit as st
 from PIL import Image
+from streamlit_geolocation import streamlit_geolocation  # pip install streamlit-geolocation [web:4]
 
 API_URL = "https://api.perplexity.ai/chat/completions"
 DEFAULT_MODEL = "sonar-pro"
-
 
 # ---------- State & helpers ----------
 
@@ -21,22 +21,24 @@ def init_state():
         "image_bytes": None,
         "image_mime": None,
         "image_data_uri": None,
-        "display_messages": [],
-        "api_history": [],
-        # For GIAp we default to Auto and hide the selector
-        "mode": "Auto",
-        "context_notes": "",
-        "specimen_label": "",
-        "model": DEFAULT_MODEL,
         "last_uploaded_signature": None,
-        # Tutoring flow
-        "student_observations": "",
-        "student_best_answer": "",
-        "known_name": "",
-        "student_name": "",
-        # Zoom options (simple on/off for phone app)
+        "last_ai_message": "",
+        # Simple student flow
+        "student_guess": "",
+        "student_nickname": "",
+        # Hidden / instructor
+        "mode": "Auto",
+        "model": DEFAULT_MODEL,
+        "specimen_label": "",
+        "context_notes": "",
         "include_auto_zoom": True,
         "zoom_fraction": 0.5,
+        # Geo
+        "latitude": None,
+        "longitude": None,
+        "location_accuracy_m": None,
+        # API history (minimal, used just to send context)
+        "api_history": [],
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -84,11 +86,6 @@ def update_uploaded_image(uploaded_file):
 
 
 def get_image_contents_for_api():
-    """
-    Returns a list of image content dicts for the API:
-    - Always includes the full image.
-    - Optionally includes a zoomed center crop if enabled.
-    """
     if not st.session_state.image_bytes or not st.session_state.image_data_uri:
         return []
 
@@ -147,66 +144,49 @@ Decide which domain best fits the specimen: rock, mineral, fossil, sand/granular
 If the domain is unclear, say so explicitly and explain what visible evidence would help.
 """,
         "Rock": """
-Focus on rock identification. Prioritize texture, grain size, clast vs crystalline texture, sorting, rounding, layering, vesicles, foliation, cement, and matrix.
-Avoid overclaiming composition when the image does not support it.
+Focus on rock identification with simple, student-friendly language. Mention texture, grain size, layering, vesicles, and foliation only if they are clearly visible.
 """,
         "Mineral": """
-Focus on mineral identification. Prioritize color, luster, transparency, habit, cleavage/fracture clues, crystal form, and likely hardness implications if visible.
-Avoid claiming a mineral species unless the image evidence is strong.
+Focus on mineral identification using easy terms: color, shine, transparency, and crystal shape. Do not overclaim species without strong visual evidence.
 """,
         "Fossil": """
-Focus on fossil identification. Prioritize symmetry, segmentation, ornamentation, shell geometry, visible structures, preservation style, and likely fossil group.
-Avoid forcing a genus/species ID from weak evidence.
+Focus on fossil identification in simple language: shell or body shape, symmetry, segments, and obvious patterns.
 """,
         "Sand/Granular": """
-Focus on sand, grains, sediment, soil particles, or particulate forensic-style material.
-Comment when possible on grain size class, sorting, roundness/angularity, sphericity, transparency/opacity, luster, quartz likelihood, feldspar clues, lithic fragments, heavy minerals, organic fragments, and what cannot be determined from this image alone.
-Do not call it a powder or crystal substance unless the image clearly supports that language.
+Focus on sand or grains in simple terms: grain size, round vs sharp edges, and overall mix of light vs dark grains.
 """,
         "Forensic": """
-Focus on trace material or forensic-style particulate evidence.
-Describe visible particle classes, shape variation, color variation, transparency, possible natural vs manufactured particles, contamination risk, and what follow-up observations are needed before any strong claim.
-Be especially conservative.
+Focus on describing tiny particles in everyday language, being very cautious about any strong identification.
 """,
     }
 
     return f"""
-You are a conversational geology tutor for an introductory college teaching app in 2026.
+You are a very concise, friendly geology helper for an introductory lab app in 2026.
 
-General rules:
-- Sound like a patient lab instructor, not a script. Vary your wording and examples.
-- Distinguish direct observation from interpretation and keep observations honest, even if they do not fully support the instructor's known name.
-- Be useful, specific, cautious, and friendly.
-- Do not overclaim. Admit uncertainty and change your mind if new information appears.
-- When discussing geology, focus on the actual descriptive features students should observe.
-- Teach the student how to look, not just what to conclude.
-- If the evidence is weak, offer a small number of plausible interpretations and explain why.
-- Keep responses compact (about 4–8 sentences) and clearly tied to THIS particular image and chat turn.
-- Whenever it helps, explicitly connect your explanation to what the student just said.
-- Avoid repeating the same examples or sentence openings you used earlier in this conversation.
-- Use the full image for overall context and scale, and any zoomed image(s) to inspect fine details like textures, grain boundaries, cleavage, or fossils.
-- If the student asks for a summary or evaluation, provide it in a friendly, concise way that validates what they did well and gives specific next steps.
+Your job:
+- Look at each image and give just a few clear observations that a beginner can see.
+- Compare those observations to the student's suggested name.
+- If the student's name is probably right, say "Congratulations" or something similar, then briefly explain 1–3 reasons why it fits.
+- If the name is probably wrong or too specific, say kindly that it may not match and suggest 1–2 visible reasons why, in simple language.
+- Always keep the tone supportive and short. Avoid long paragraphs.
+- Suggest exactly one simple next step if the image is hard to read (e.g., better light, different angle, add a scale like a coin or ruler).
+- Do not talk like a research paper. Use short sentences and plain words.
+- Do not list more than about 4 short sentences total, or 3 short bullet-style lines.
 
-Response style:
-- Answer in 1–2 natural-sounding paragraphs.
-- Finish with exactly one short, open-ended question to keep the conversation going (unless the student explicitly asks for a summary or says they are done).
+Student reading and typing should be minimal. Focus on what they can actually see.
 
 Domain instructions:
 {mode_guidance.get(mode, mode_guidance["Auto"])}
 """.strip()
 
 
-def build_api_messages():
+def build_api_messages(user_prompt_text):
     messages = [{"role": "system", "content": build_system_prompt(st.session_state.mode)}]
 
-    for item in st.session_state.api_history:
-        if item["role"] == "user":
-            content = [{"type": "text", "text": item["content"]}]
-            images = get_image_contents_for_api()
-            content.extend(images)
-            messages.append({"role": "user", "content": content})
-        else:
-            messages.append({"role": "assistant", "content": item["content"]})
+    content = [{"type": "text", "text": user_prompt_text}]
+    images = get_image_contents_for_api()
+    content.extend(images)
+    messages.append({"role": "user", "content": content})
 
     return messages
 
@@ -214,9 +194,7 @@ def build_api_messages():
 def call_perplexity(messages=None):
     api_key = get_api_key()
     if not api_key:
-        raise RuntimeError(
-            "Missing PERPLEXITY_API_KEY in your environment."
-        )
+        raise RuntimeError("Missing PERPLEXITY_API_KEY in your environment.")
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -224,7 +202,7 @@ def call_perplexity(messages=None):
     }
 
     if messages is None:
-        messages = build_api_messages()
+        raise RuntimeError("Messages required for API call.")
 
     payload = {
         "model": st.session_state.model,
@@ -242,158 +220,84 @@ def call_perplexity(messages=None):
     return data["choices"][0]["message"]["content"].strip()
 
 
-def start_first_analysis():
+def capture_location():
+    loc = streamlit_geolocation()
+    if loc and loc.get("latitude") and loc.get("longitude"):
+        st.session_state.latitude = loc["latitude"]
+        st.session_state.longitude = loc["longitude"]
+        st.session_state.location_accuracy_m = loc.get("accuracy")
+        st.success(
+            f"Location captured: "
+            f"{loc['latitude']:.5f}, {loc['longitude']:.5f} "
+            f"(±{loc.get('accuracy', 0):.0f} m)"
+        )
+    else:
+        st.info("Tap the location button again if you want to tag this specimen.")
+
+
+def start_simple_analysis(uploaded_file=None):
+    if uploaded_file is not None:
+        update_uploaded_image(uploaded_file)
+
     if not st.session_state.image_data_uri:
         raise RuntimeError("Please take or upload an image first.")
 
-    label = st.session_state.specimen_label.strip() or "No specimen label provided"
-    notes = st.session_state.context_notes.strip() or "No additional notes provided"
-    student_name = st.session_state.student_name.strip() or "[no name provided]"
-    observations = st.session_state.student_observations.strip() or "[none entered yet]"
-    best_answer = st.session_state.student_best_answer.strip() or "[none entered yet]"
-    known_name = st.session_state.known_name.strip() or "[none provided]"
-
     captured_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    lat = st.session_state.latitude
+    lon = st.session_state.longitude
+    acc = st.session_state.location_accuracy_m
 
-    starter_prompt = f"""
-Please analyze the uploaded specimen image for a teaching app (phone-friendly version).
+    if lat is not None and lon is not None:
+        location_line = f"Approximate location: {lat:.5f}, {lon:.5f} (±{acc or 0:.0f} m)"
+    else:
+        location_line = "Approximate location: [not captured]"
 
-Selected mode: {st.session_state.mode}
-Specimen label: {label}
+    student_guess = st.session_state.student_guess.strip() or "[no name entered]"
+    nickname = st.session_state.student_nickname.strip()
+
+    label = st.session_state.specimen_label.strip() or "[none]"
+    notes = st.session_state.context_notes.strip() or "[none]"
+
+    user_prompt_text = f"""
+Student suggested name: {student_guess}
+Student nickname (if given; you may use it once): {nickname or "[none]"}
+Mode: {st.session_state.mode}
+Specimen label (instructor / lab use): {label}
 Capture time (approx): {captured_time}
-Student/instructor notes: {notes}
-Student name (if given, use occasionally in a natural, non-repetitive way): {student_name}
-Student observations so far: {observations}
-Student best answer so far: {best_answer}
-Known name from instructor (if any): {known_name}
+{location_line}
+Short notes from instructor (if any): {notes}
 
-Your job:
-- Start with observation before interpretation.
-- If this is sand or granular material, explicitly address whether the visible grains appear well sorted or poorly sorted, whether quartz is likely, whether lithic grains may be present, and what cannot be determined confidently.
-- If the evidence does not support a strong ID, say so clearly.
-- Sound conversational and non-repetitive, as if you are talking with the student at the lab bench.
-- Use the full image for scale and any zoomed image(s) to inspect textures and fine details.
-- End with exactly one open-ended question that invites the student to make or refine an observation.
+Please:
+- Say in a few short sentences if the student's name seems close or not.
+- If close, say congratulations and give 1–3 simple reasons.
+- If not close, gently say so and give 1–2 reasons and one suggestion for a better photo or view.
+Keep everything very short and friendly.
 """.strip()
 
-    visible_user_text = (
-        f"Please analyze this uploaded specimen.\n\n"
-        f"Mode: {st.session_state.mode}\n"
-        f"Label: {label}\n"
-        f"Capture time: {captured_time}\n"
-        f"Notes: {notes}"
-    )
+    messages = build_api_messages(user_prompt_text)
+    reply = call_perplexity(messages)
 
-    st.session_state.api_history = [{"role": "user", "content": starter_prompt}]
-    st.session_state.display_messages = [
-        {"role": "user", "content": visible_user_text}
-    ]
-
-    reply = call_perplexity()
-
-    st.session_state.api_history.append({"role": "assistant", "content": reply})
-    st.session_state.display_messages.append({"role": "assistant", "content": reply})
+    st.session_state.last_ai_message = reply
     st.session_state.started = True
 
 
-def send_followup(user_text):
-    user_text = user_text.strip()
-    if not user_text:
-        return
-
-    student_name = st.session_state.student_name.strip() or "[no name provided]"
-    observations = st.session_state.student_observations.strip() or "[none entered yet]"
-    best_answer = st.session_state.student_best_answer.strip() or "[none entered yet]"
-    known_name = st.session_state.known_name.strip() or "[none provided]"
-
-    followup_prompt = f"""
-Student follow-up:
-{user_text}
-
-Context:
-- Student name (if usable, mention naturally at most once per reply): {student_name}
-- Mode: {st.session_state.mode}
-- Specimen label: {st.session_state.specimen_label or "[none]"}
-- Student observations: {observations}
-- Student best answer: {best_answer}
-- Known name from instructor: {known_name}
-- Your earlier messages might include a guess that could be wrong.
-
-Please answer as a conversational geology tutor.
-Stay grounded in the uploaded image and the student's words.
-If the student provides new observations or corrections, incorporate them honestly.
-If the new information or known name conflicts with your earlier idea, politely explain the mismatch and keep your observations honest to the image.
-Be concise (about 4–8 sentences), supportive, and vary your phrasing so it does not sound like a template.
-When helpful, refer the student to specific parts of the main image or the zoomed view (e.g., "look closely at the zoomed image where the grains touch").
-If the student asks for a summary or evaluation, provide it without a follow-up question.
-Otherwise, end with exactly one open-ended question that nudges the student toward a next observation or comparison.
-""".strip()
-
-    st.session_state.display_messages.append({"role": "user", "content": user_text})
-    st.session_state.api_history.append({"role": "user", "content": followup_prompt})
-
-    reply = call_perplexity()
-
-    st.session_state.api_history.append({"role": "assistant", "content": reply})
-    st.session_state.display_messages.append({"role": "assistant", "content": reply})
-
-
-def save_conversation_to_file():
-    """
-    Exports the conversation to a plain text file with timestamp.
-    """
-    if not st.session_state.display_messages:
-        return None
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    student_name = st.session_state.student_name.strip() or "student"
-    safe_name = "".join(c if c.isalnum() else "_" for c in student_name)
-    filename = f"GIAp_conversation_{safe_name}_{timestamp}.txt"
-
-    lines = []
-    lines.append("=" * 60)
-    lines.append("GIAp: Guided Image Analysis (phone) - Conversation Log")
-    lines.append("=" * 60)
-    lines.append(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append(f"Student: {st.session_state.student_name or '[not provided]'}")
-    lines.append(f"Specimen label: {st.session_state.specimen_label or '[none]'}")
-    lines.append(f"Mode: {st.session_state.mode}")
-    lines.append(f"Known name: {st.session_state.known_name or '[none]'}")
-    lines.append("=" * 60)
-    lines.append("")
-
-    for msg in st.session_state.display_messages:
-        role = "STUDENT" if msg["role"] == "user" else "AI TUTOR"
-        lines.append(f"[{role}]")
-        lines.append(msg["content"])
-        lines.append("")
-
-    lines.append("=" * 60)
-    lines.append("End of conversation")
-    lines.append("=" * 60)
-
-    content = "\n".join(lines)
-    return filename, content
-
-
-# ---------- Streamlit UI: GIAp (phone-first) ----------
+# ---------- Streamlit UI: GIAp (point-and-click student helper) ----------
 
 st.set_page_config(
-    page_title="GIAp: Guided Image Analysis (phone)",
+    page_title="GIAp: Point & Click Geology Helper",
     page_icon="📱",
     layout="centered",
 )
 init_state()
 
-st.title("📱 GIAp: Guided Image Analysis")
-st.caption(
-    "Point your phone at a specimen, capture a photo, and chat with the geology tutor."
-)
+st.title("📱 GIAp: Point & Click Geology Helper")
+st.caption("Aim at a specimen, tap once, and get a short geology hint.")
 
-# Minimal top-level controls, with an Advanced expander for instructors
-with st.expander("Advanced (instructor / power user)", expanded=False):
+with st.expander("Instructor / advanced options", expanded=False):
     st.session_state.model = st.text_input(
-        "Perplexity model", value=st.session_state.model
+        "Perplexity model",
+        value=st.session_state.model,
+        help="Leave as-is for normal student use.",
     )
     st.session_state.mode = st.selectbox(
         "Specimen mode",
@@ -409,11 +313,12 @@ with st.expander("Advanced (instructor / power user)", expanded=False):
         if st.session_state.mode
         in ["Auto", "Rock", "Mineral", "Fossil", "Sand/Granular", "Forensic"]
         else 0,
-        help="Leave on Auto for most student use.",
+        help="Use Auto for most lab work.",
     )
     st.session_state.include_auto_zoom = st.checkbox(
-        "Send a zoomed-in center crop along with the full image",
+        "Send a zoomed-in center crop",
         value=st.session_state.include_auto_zoom,
+        help="Helps the AI see fine textures.",
     )
     st.session_state.zoom_fraction = st.slider(
         "Zoom size (fraction of image)",
@@ -425,28 +330,21 @@ with st.expander("Advanced (instructor / power user)", expanded=False):
     st.session_state.specimen_label = st.text_input(
         "Specimen label / sample ID (optional)",
         value=st.session_state.specimen_label,
-        placeholder="e.g., Beach sand sample A",
+        placeholder="e.g., Lab 3 sample A",
     )
     st.session_state.context_notes = st.text_area(
-        "Context notes (optional)",
+        "Short context notes (optional)",
         value=st.session_state.context_notes,
         height=80,
-        placeholder="e.g., hand lens view, bright lab light, no scale bar",
-    )
-    st.session_state.student_name = st.text_input(
-        "Student name (optional)",
-        value=st.session_state.student_name,
-        placeholder="e.g., Alex",
+        placeholder="e.g., hand lens view, indoor light, no scale bar",
     )
 
 st.markdown("---")
 
-# Main phone flow: image + simple inputs + analyze + chat
+st.subheader("1. Take or choose a specimen photo")
 
-# 1. Image capture / upload
-st.subheader("1. Capture specimen image")
 uploaded_file = st.file_uploader(
-    "Take a photo or choose one from your library",
+    "Tap here to take a photo or choose from your library",
     type=["png", "jpg", "jpeg", "webp"],
     accept_multiple_files=False,
 )
@@ -461,109 +359,60 @@ if st.session_state.image_bytes:
         use_container_width=True,
     )
 
-    if st.session_state.include_auto_zoom:
-        try:
-            img = Image.open(BytesIO(st.session_state.image_bytes))
-            w, h = img.size
-            frac = st.session_state.zoom_fraction
-            frac = max(0.1, min(frac, 1.0))
-
-            cw, ch = int(w * frac), int(h * frac)
-            left_crop = (w - cw) // 2
-            top_crop = (h - ch) // 2
-            right_crop = left_crop + cw
-            bottom_crop = top_crop + ch
-            crop_center = img.crop((left_crop, top_crop, right_crop, bottom_crop))
-
-            st.image(
-                crop_center,
-                caption=f"Auto zoom (center {int(frac * 100)}% of image)",
-                use_container_width=True,
-            )
-        except Exception:
-            pass
+st.markdown("#### Optional: tag this specimen with your location")
+if st.button("📍 Get my location", use_container_width=True):
+    try:
+        capture_location()
+    except Exception as e:
+        st.error(str(e))
 
 st.markdown("---")
 
-# 2. Student + instructor input (simplified)
-st.subheader("2. Describe what you see")
+st.subheader("2. Your best name for this specimen")
 
-st.session_state.student_observations = st.text_area(
-    "Student notes about this specimen",
-    value=st.session_state.student_observations,
-    height=120,
-    placeholder="Write what you notice: colors, grain size, texture, layering, crystal shapes, etc.",
+st.session_state.student_guess = st.text_input(
+    "Sample name (your best guess)",
+    value=st.session_state.student_guess,
+    placeholder="e.g., sandstone, basalt, quartz, shell fossil",
 )
 
-st.session_state.known_name = st.text_input(
-    "Instructor sample name (optional)",
-    value=st.session_state.known_name,
-    placeholder="What your instructor says this sample is",
-)
-
-# Optionally keep a slot for the student's best guess (hidden behind expander)
-with st.expander("Include your best guess (optional)", expanded=False):
-    st.session_state.student_best_answer = st.text_input(
-        "Your best interpretation / name",
-        value=st.session_state.student_best_answer,
-        placeholder="e.g., well-sorted quartz sand, basalt, calcite crystal",
+with st.expander("Optional: your nickname", expanded=False):
+    st.session_state.student_nickname = st.text_input(
+        "Nickname (the helper may use this once)",
+        value=st.session_state.student_nickname,
+        placeholder="e.g., Alex",
     )
 
 st.markdown("---")
 
-# 3. Analyze button
-start_disabled = st.session_state.image_data_uri is None
+can_analyze = st.session_state.image_data_uri is not None
 
 if st.button(
-    "Analyze specimen",
+    "📷 Capture & analyze",
     type="primary",
-    disabled=start_disabled,
+    disabled=not can_analyze,
     use_container_width=True,
 ):
     try:
-        start_first_analysis()
+        start_simple_analysis(uploaded_file=None)
         st.experimental_rerun()
     except Exception as e:
         st.error(str(e))
 
-# 4. Conversation
 st.markdown("---")
-st.subheader("3. Chat about this specimen")
 
-if not st.session_state.display_messages:
-    st.info("Capture an image and tap **Analyze specimen** to begin.")
+st.subheader("3. Quick feedback")
+
+if not st.session_state.last_ai_message:
+    st.info("Take a photo, enter your best name, then tap **Capture & analyze**.")
 else:
-    for msg in st.session_state.display_messages:
-        with st.chat_message("assistant" if msg["role"] == "assistant" else "user"):
-            st.markdown(msg["content"])
+    st.markdown(st.session_state.last_ai_message)
 
-if st.session_state.started:
-    prompt = st.chat_input("Ask a follow-up question or request a summary")
-    if prompt:
-        try:
-            send_followup(prompt)
-            st.experimental_rerun()
-        except Exception as e:
-            st.error(str(e))
+    st.markdown("")
+    st.caption("Try another angle, better light, or a scale bar, then tap again.")
 
-# 5. Save conversation (optional)
-if st.session_state.started and st.session_state.display_messages:
-    with st.expander("Save conversation log", expanded=False):
-        if st.button("Prepare download", use_container_width=True):
-            try:
-                filename, content = save_conversation_to_file()
-                st.download_button(
-                    label="Download conversation log",
-                    data=content,
-                    file_name=filename,
-                    mime="text/plain",
-                    use_container_width=True,
-                )
-            except Exception as e:
-                st.error(str(e))
-
-# 6. Reset
 st.markdown("---")
+
 if st.button("Reset GIAp", use_container_width=True):
     reset_app()
     st.experimental_rerun()
