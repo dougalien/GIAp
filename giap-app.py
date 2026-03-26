@@ -41,6 +41,21 @@ def init_state():
             st.session_state[k] = v
 
 
+def ensure_image_data_uri():
+    # If we already have bytes but somehow lost data_uri, rebuild it
+    if st.session_state.get("image_bytes") and not st.session_state.get("image_data_uri"):
+        try:
+            mime = st.session_state.get("image_mime") or "image/png"
+            b64 = base64.b64encode(st.session_state.image_bytes).decode("utf-8")
+            st.session_state.image_data_uri = f"data:{mime};base64,{b64}"
+        except Exception:
+            # If anything goes wrong, clear image so UI is consistent
+            st.session_state.image_bytes = None
+            st.session_state.image_name = None
+            st.session_state.image_mime = None
+            st.session_state.image_data_uri = None
+
+
 def reset_app():
     keep_model = st.session_state.get("model", DEFAULT_MODEL)
     keep_mode = st.session_state.get("mode", "Auto")
@@ -304,6 +319,7 @@ st.set_page_config(
     layout="centered",
 )
 init_state()
+ensure_image_data_uri()
 
 st.title("GIAp: Guided Image Analyzer")
 st.caption("(point and click version)")
@@ -342,7 +358,7 @@ else:
 
 st.markdown("---")
 
-# 3. Analyze sample (no disabled=, just guard in start_first_analysis)
+# 3. Analyze sample (guard is inside start_first_analysis)
 if st.button("Analyze sample", type="primary", use_container_width=True):
     try:
         start_first_analysis()
