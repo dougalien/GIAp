@@ -309,38 +309,64 @@ Stay very short and simple.
 # ---------- Streamlit UI: GIAp (point-and-click student helper) ----------
 
 st.set_page_config(
-    page_title="GIAp: Point & Click Geology Helper",
+    page_title="GIAp: Guided Image Analyzer (point and click)",
     page_icon="🪨",
     layout="centered",
 )
 init_state()
 
-# Title (single line, no phone emoji)
+# Title
 st.title("GIAp: Guided Image Analyzer")
 st.caption("(point and click version)")
-st.caption("Give the sample a name, tap analyze, and get a quick geology hint.")
+st.caption("Give the sample a name, take a photo, tap analyze, and get a quick geology hint.")
 
-# Sample name just below title
+# 1. Sample name just under title
 st.session_state.student_guess = st.text_input(
     "Sample name (your best guess)",
     value=st.session_state.student_guess,
     placeholder="e.g., sandstone, basalt, quartz, shell fossil",
 )
 
-# Main analyze button (uses existing image; image capture is via uploader below)
+st.markdown("---")
+
+# 2. Take or upload photo (right under name)
+st.subheader("Take or upload specimen photo")
+
+uploaded_file = st.file_uploader(
+    "Tap here to take a photo or choose from your library",
+    type=["png", "jpg", "jpeg", "webp"],
+    accept_multiple_files=False,
+)
+
+if uploaded_file is not None:
+    update_uploaded_image(uploaded_file)
+    st.rerun()
+
+if st.session_state.image_bytes:
+    st.image(
+        st.session_state.image_bytes,
+        caption=st.session_state.image_name or "Specimen image",
+        use_container_width=True,
+    )
+else:
+    st.info("No specimen image yet. Take or choose a photo above.")
+
+st.markdown("---")
+
+# 3. Analyze button next
 if st.button("Analyze sample", type="primary", use_container_width=True):
     try:
         if not st.session_state.image_data_uri:
-            st.warning("Scroll down to take or choose a photo first, then tap again.")
+            st.warning("Take or choose a photo first, then tap again.")
         else:
             start_simple_analysis()
-            st.experimental_rerun()
+            st.rerun()
     except Exception as e:
         st.error(str(e))
 
 st.markdown("---")
 
-# Output directly under the button
+# 4. Output
 st.subheader("Output")
 
 if not st.session_state.last_ai_message:
@@ -356,8 +382,9 @@ else:
             else:
                 st.markdown(f"*Helper:* {text}")
 
-# Follow-up chat box
 st.markdown("---")
+
+# 5. Follow-up chat
 st.subheader("Follow-up chat")
 
 if not st.session_state.image_data_uri:
@@ -371,44 +398,20 @@ else:
     if st.button("Send follow-up", use_container_width=True):
         try:
             send_followup(followup)
-            st.experimental_rerun()
+            st.rerun()
         except Exception as e:
             st.error(str(e))
 
 st.markdown("---")
 
-# Optional photo upload
-st.subheader("Take or upload specimen photo")
-
-uploaded_file = st.file_uploader(
-    "Tap here to take a photo or choose from your library",
-    type=["png", "jpg", "jpeg", "webp"],
-    accept_multiple_files=False,
-)
-
-if uploaded_file is not None:
-    update_uploaded_image(uploaded_file)
-    st.experimental_rerun()
-
-if st.session_state.image_bytes:
-    st.image(
-        st.session_state.image_bytes,
-        caption=st.session_state.image_name or "Specimen image",
-        use_container_width=True,
-    )
-else:
-    st.info("No specimen image yet.")
-
-st.markdown("---")
-
-# Clear app button
+# 6. Clear app
 if st.button("Clear app", use_container_width=True):
     reset_app()
-    st.experimental_rerun()
+    st.rerun()
 
 st.markdown("---")
 
-# Advanced features at the very bottom
+# 7. Advanced features at the bottom
 with st.expander("Advanced (instructor / power user)", expanded=False):
     st.session_state.model = st.text_input(
         "Perplexity model",
