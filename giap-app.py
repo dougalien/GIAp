@@ -22,7 +22,7 @@ def init_state():
         "last_uploaded_signature": None,
         "display_messages": [],
         "model": DEFAULT_MODEL,
-        # Geology tutoring context
+        # Tutoring context
         "mode": "Auto",
         "context_notes": "",
         "specimen_label": "",
@@ -30,7 +30,9 @@ def init_state():
         "student_best_answer": "",
         "known_name": "",
         "student_name": "",
-        # Simple follow-up UI
+        # First reply anchor
+        "first_reply": "",
+        # Follow-up UI
         "clear_followup_next": False,
     }
     for k, v in defaults.items():
@@ -90,7 +92,6 @@ def get_image_contents_for_api():
     if not st.session_state.image_bytes:
         return []
 
-    # Downscale once to reduce tokens but keep enough detail
     try:
         img = Image.open(BytesIO(st.session_state.image_bytes))
         img.thumbnail((768, 768))
@@ -127,7 +128,7 @@ def build_system_prompt(mode: str):
         "Rock": "Focus on rock ID: grain size, textures, clast vs crystalline, layers, vesicles, foliation if visible.",
         "Mineral": "Focus on mineral ID: color, luster, transparency, crystal shapes, and obvious cleavage/fracture.",
         "Fossil": "Focus on fossil ID: shape, symmetry, segments, shell patterns, and preservation style.",
-        "Sand/Granular": "Focus on sand or grains: grain size, sorting, rounding, color mix, and any obvious rock/mineral fragments.",
+        "Sand/Granular": "Focus on sand or grains: grain size, sorting, rounding, color mix, and visible fragments.",
         "Forensic": "Focus on tiny particles: shapes, colors, and how mixed they look. Stay very cautious.",
     }
 
@@ -141,10 +142,10 @@ For each specimen image, your job is:
 
 Rules:
 - Maximum 3 short sentences total. No paragraphs, no bullet lists.
-- Use plain words; assume this is a 100-level course.
-- Be honest and cautious. If the ID is uncertain, say so.
+- Use plain words; assume a 100-level course.
+- Be honest and cautious. If the ID is uncertain, say that clearly.
 - Stay grounded in the image. Do not invent properties you cannot see (like hardness or streak).
-- Be encouraging, not harsh.
+- If an instructor's known name is provided and the photo is ambiguous, treat that as the best label and use the image as support for teaching.
 
 Mode hint: {mode_guidance.get(mode, mode_guidance["Auto"])}
 """.strip()
@@ -206,6 +207,7 @@ def start_first_analysis():
     observations = st.session_state.student_observations.strip() or "[none entered yet]"
     best_answer = st.session_state.student_best_answer.strip() or "[none entered yet]"
     known_name = st.session_state.known_name.strip() or "[none provided]"
+    mode = st.session_state.mode
 
     user_text = f"""
 Look at this geology specimen photo for an intro lab at Salem State.
@@ -216,15 +218,17 @@ Specimen label / sample ID: {label}
 Student observations (if any): {observations}
 Extra context notes: {notes}
 Student name (optional, use casually at most once): {student_name}
-Current mode: {st.session_state.mode}
+Current mode: {mode}
 
 Follow the 3-sentence format from your system instructions.
 Keep it short, clear, and focused on what a beginning student can actually see.
+If the photo is ambiguous, say so and lean on the instructor's known name as the best label.
 """.strip()
 
     messages = build_initial_messages(user_text)
     reply = call_perplexity(messages)
 
+    st.session_state.first_reply = reply
     st.session_state.display_messages = [
         {"role": "assistant", "content": reply}
     ]
@@ -236,6 +240,7 @@ def send_followup(user_text: str):
     if not user_text:
         return
 
+    earlier = st.session_state.get("first_reply", "[no earlier reply stored]")
     label = st.session_state.specimen_label.strip() or "[no label]"
     notes = st.session_state.context_notes.strip() or "[no extra notes]"
     student_name = st.session_state.student_name.strip() or "[no name provided]"
@@ -252,7 +257,10 @@ def send_followup(user_text: str):
                 {
                     "type": "text",
                     "text": f"""
-This is a follow-up question about the SAME specimen image you just analyzed.
+You are continuing a geology tutoring session about ONE specimen.
+
+Here is your earlier full answer (do NOT deny writing this, even if it was wrong):
+\"\"\"{earlier}\"\"\"
 
 Context:
 - Mode: {mode}
@@ -266,9 +274,10 @@ Context:
 Student's follow-up:
 {user_text}
 
-Answer briefly (2–4 short sentences), keep the same straightforward tone,
-and stay consistent with your earlier observations unless the student gives a clear correction.
-You do NOT see the image again now.
+Instructions:
+- If your earlier answer clashes with the instructor's known name or the student's evidence, clearly admit your earlier guess was likely wrong and explain briefly why.
+- Never claim you did not say something that appears in the earlier answer above.
+- Keep the reply short (2–4 short sentences), focused on what the student can see and how they can double-check in the lab.
 """.strip(),
                 }
             ],
@@ -282,7 +291,7 @@ You do NOT see the image again now.
     st.session_state.display_messages.append({"role": "assistant", "content": reply})
 
 
-# ---------- GIAp UI (phone-friendly, cheap) ----------
+# ---------- GIAp UI (phone-friendly, anchored) ----------
 
 st.set_page_config(
     page_title="GIAp: Guided Image Analyzer",
@@ -293,7 +302,6 @@ st.set_page_config(
 init_state()
 ensure_image_data_uri()
 
-# Light, neutral styling (readable, not color-dependent)
 st.markdown(
     """
     <style>
@@ -335,14 +343,14 @@ st.markdown(
 
 st.markdown('<div class="gia-header">GIAp: Guided Image Analyzer</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="gia-subtle">(Created by We are dougalien — quick feedback for intro geology labs)</div>',
+    '<div class="gia-subtle">(Image-based tutor by We are dougalien — anchored, short feedback)</div>',
     unsafe_allow_html=True,
 )
 st.caption("Give the sample a name, take a photo, tap Analyze, then ask a short follow-up if you want.")
 
 st.markdown("")
 
-# 1. Sample name and basic info
+# 1. Sample info
 st.markdown("### 1. Sample info")
 with st.container():
     st.markdown('<div class="gia-section">', unsafe_allow_html=True)
@@ -368,7 +376,7 @@ with st.container():
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# 2. Upload photo
+# 2. Specimen photo
 st.markdown("### 2. Specimen photo")
 with st.container():
     st.markdown('<div class="gia-section">', unsafe_allow_html=True)
@@ -410,7 +418,7 @@ with st.container():
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# 4. Output
+# 4. Tutor feedback
 st.markdown("### 4. Tutor feedback")
 with st.container():
     st.markdown('<div class="gia-section">', unsafe_allow_html=True)
@@ -428,7 +436,7 @@ with st.container():
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# 5. Follow-up (cheap, text-only) with safe clearing
+# 5. Follow-up question (anchored, text-only)
 st.markdown("### 5. Follow-up question")
 with st.container():
     st.markdown('<div class="gia-section">', unsafe_allow_html=True)
