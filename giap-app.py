@@ -192,7 +192,8 @@ def build_api_messages(user_prompt_text):
 def call_perplexity(messages):
     api_key = get_api_key()
     if not api_key:
-        raise RuntimeError("Missing PERPLEXITY_API_KEY in your environment.")
+        st.error("Missing PERPLEXITY_API_KEY in your environment.")
+        return "Error: no API key set."
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -204,16 +205,18 @@ def call_perplexity(messages):
         "messages": messages,
     }
 
-    response = requests.post(API_URL, headers=headers, json=payload, timeout=180)
+    try:
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=180)
+    except Exception as e:
+        st.error(f"Request error: {e}")
+        return "Error: request to AI failed."
 
     if response.status_code != 200:
-        raise RuntimeError(
-            f"Perplexity error {response.status_code}: {response.text[:2000]}"
-        )
+        st.error(f"Perplexity error {response.status_code}: {response.text[:300]}")
+        return f"Error: AI returned status {response.status_code}."
 
     data = response.json()
     return data["choices"][0]["message"]["content"].strip()
-
 
 def capture_location_stub():
     # Placeholder for future geolocation
@@ -297,7 +300,7 @@ In one to three short sentences, respond in a very friendly way:
 - You may suggest one next step (e.g., new angle, add scale, or compare with another sample).
 Stay very short and simple.
 """.strip()
-
+    st.write("DEBUG: starting analysis...")
     messages = build_api_messages(follow_prompt)
     reply = call_perplexity(messages)
 
