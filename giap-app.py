@@ -126,8 +126,59 @@ def call_claude(prompt, img):
     return json.loads(r.json()["content"][0]["text"])
 
 # =============================
+# AUTH
+# =============================
+
+def get_app_password():
+    try:
+        return st.secrets.get("APP_PASSWORD", "")
+    except Exception:
+        return ""
+
+
+def ensure_auth():
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    if "login_error" not in st.session_state:
+        st.session_state.login_error = ""
+
+    if st.session_state.authenticated:
+        return
+
+    st.markdown("""
+    <div class="main-card" style="max-width:520px; margin:3rem auto;">
+        <div class="soft-label">Login</div>
+        <h2 style="margin-top:0.25rem; margin-bottom:0.35rem;">Welcome to GIAp</h2>
+        <div style="color:#5B6570; margin-bottom:1rem;">Enter the app password to continue.</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.form("login_form"):
+        entered = st.text_input("Password", type="password", placeholder="Enter password")
+        submitted = st.form_submit_button("Enter", use_container_width=True)
+
+    actual = get_app_password()
+
+    if submitted:
+        if not actual:
+            st.session_state.login_error = "APP_PASSWORD is missing from Streamlit secrets."
+        elif entered == actual:
+            st.session_state.authenticated = True
+            st.session_state.login_error = ""
+            st.rerun()
+        else:
+            st.session_state.login_error = "Incorrect password."
+
+    if st.session_state.login_error:
+        st.error(st.session_state.login_error)
+
+    st.stop()
+
+# =============================
 # STATE
 # =============================
+
+ensure_auth()
 
 if "chat" not in st.session_state:
     st.session_state.chat = []
@@ -209,6 +260,11 @@ st.markdown("""
 
 # Tier
 mode = st.sidebar.radio("Tier", ["Free", "Pro"])
+
+if st.sidebar.button("Sign out", use_container_width=True):
+    st.session_state.authenticated = False
+    st.session_state.login_error = ""
+    st.rerun()
 
 # Pro settings
 if mode == "Pro":
