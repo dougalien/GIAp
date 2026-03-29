@@ -136,8 +136,76 @@ if "chat" not in st.session_state:
 # UI
 # =============================
 
-st.set_page_config(layout="wide")
-st.title("🪨 GIAp")
+st.set_page_config(layout="wide", page_title="GIAp")
+
+st.markdown("""
+<style>
+.stApp {
+    background: linear-gradient(180deg, #F7F4EF 0%, #EDE6DA 100%);
+    color: #1F2933;
+}
+
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #E5DED0 0%, #D8CFBF 100%);
+}
+
+.main-card {
+    background: rgba(255,255,255,0.82);
+    border: 1px solid #C8BFAF;
+    border-radius: 18px;
+    padding: 1rem 1.2rem;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+    margin-bottom: 1rem;
+}
+
+.answer-box {
+    background: #F8FBF8;
+    border-left: 6px solid #2F6B5F;
+    border-radius: 12px;
+    padding: 1rem;
+    color: #1F2933;
+}
+
+.next-box {
+    background: #F6F1E8;
+    border-left: 6px solid #8C6A43;
+    border-radius: 12px;
+    padding: 0.9rem;
+    color: #1F2933;
+}
+
+.chat-user {
+    background: #EAF2F8;
+    border-radius: 12px;
+    padding: 0.75rem;
+    margin: 0.4rem 0;
+    border: 1px solid #B8C7D9;
+}
+
+.chat-ai {
+    background: #EEF5EE;
+    border-radius: 12px;
+    padding: 0.75rem;
+    margin: 0.4rem 0;
+    border: 1px solid #B9D1BF;
+}
+
+.soft-label {
+    font-size: 0.84rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #5B6570;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="main-card">
+    <h1 style="margin-bottom:0.2rem;">🪨 GIAp</h1>
+    <div style="color:#5B6570;">Earth Material Identifier</div>
+</div>
+""", unsafe_allow_html=True)
 
 # Tier
 mode = st.sidebar.radio("Tier", ["Free", "Pro"])
@@ -170,20 +238,32 @@ if file:
         obs = call_openai(OBSERVER, b64)
 
         if mode == "Free":
-            st.markdown("### Answer")
-            st.write(f"**Likely:** {obs['id']}")
-            st.write(f"Confidence: {obs['confidence']}/5")
-            st.write(obs['reason'])
-            st.info(f"Next step: {obs['next']}")
+            st.markdown("""
+<div class="main-card">
+    <div class="soft-label">Answer</div>
+    <div class="answer-box">
+        <div><strong>Likely ID:</strong> """ + str(obs['id']) + """</div>
+        <div style="margin-top:0.35rem;"><strong>Confidence:</strong> """ + str(obs['confidence']) + """/5</div>
+        <div style="margin-top:0.6rem;">""" + str(obs['reason']) + """</div>
+    </div>
+    <div class="next-box" style="margin-top:0.8rem;"><strong>Next step:</strong> """ + str(obs['next']) + """</div>
+</div>
+""", unsafe_allow_html=True)
 
         else:
             val = call_claude(VALIDATOR, b64)
             judge = call_openai(JUDGE, b64)
 
-            st.markdown("### Final Answer")
-            st.success(judge['reply'])
+            st.markdown("""
+<div class="main-card">
+    <div class="soft-label">Final Answer</div>
+    <div class="answer-box">""" + str(judge['reply']) + """</div>
+</div>
+""", unsafe_allow_html=True)
             st.metric("Confidence", judge['confidence'])
-            st.info(f"Next: {judge['next']}")
+            st.markdown("""
+<div class="next-box"><strong>Next step:</strong> """ + str(judge['next']) + """</div>
+""", unsafe_allow_html=True)
 
             with st.expander("Details"):
                 st.json(obs)
@@ -210,7 +290,13 @@ if mode == "Pro":
         st.session_state.chat.append({"user_msg": msg})
 
     for item in st.session_state.chat:
-        st.write(item)
+        if 'user_msg' in item:
+            st.markdown(f"<div class='chat-user'><strong>You:</strong> {item['user_msg']}</div>", unsafe_allow_html=True)
+        elif 'result' in item:
+            reply = item['result'].get('reply', '')
+            st.markdown(f"<div class='chat-ai'><strong>GIAp:</strong> {reply}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div class='chat-ai'>{item}</div>", unsafe_allow_html=True)
 
 # =============================
 # SAVE LOG
@@ -222,3 +308,4 @@ if mode == "Pro" and st.session_state.chat:
         data=json.dumps(st.session_state.chat, indent=2),
         file_name="gia_session.json"
     )
+
