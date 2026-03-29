@@ -24,7 +24,7 @@ PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 
 DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
-DEFAULT_CLAUDE_MODEL = "claude-3-haiku-20240307"
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
 DEFAULT_PERPLEXITY_MODEL = "sonar-pro"
 
 COUNSEL_MODES = {
