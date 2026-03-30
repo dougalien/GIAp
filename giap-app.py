@@ -4,49 +4,83 @@ import base64
 import json
 from PIL import Image
 import html
+from typing import Any, Dict, Optional, Tuple
 
 # =========================================================
 # CONFIG
 # =========================================================
 
-OPENAI_MODEL = "gpt-4o"
+OPENAI_MODEL_FAST = "gpt-4o-mini"
+OPENAI_MODEL_STRONG = "gpt-4o"
+CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
+GEMINI_MODEL = "gemini-2.0-flash"
+PERPLEXITY_MODEL = "sonar-pro"
+
+TIMEOUT = 75
 
 # =========================================================
 # PROMPTS
 # =========================================================
 
 SYSTEM = """
-You are a geology lab assistant.
+You are a careful geology image analyst.
 
 Rules:
-- Only use visible features.
-- If unsure, say "not observable".
-- Be concise.
-- Do not invent unseen properties.
+- Use only visible image evidence.
+- Do not infer locality, chemistry, hardness, streak, taste, magnetism, or reaction unless directly visible.
+- If something cannot be determined from the image alone, say so.
+- Distinguish observation from interpretation.
+- Be concise and specific.
+""".strip()
+
+PRIMARY_OBSERVER = SYSTEM + """
+
+Return valid JSON only:
+{
+  "candidate": "best identification or most likely material group",
+  "alternate": "brief alternate possibility or 'none'",
+  "confidence": 1,
+  "observations": ["visible feature 1", "visible feature 2", "visible feature 3"],
+  "why": "brief explanation of why the visible evidence supports the candidate",
+  "limits": "what cannot be determined from image alone",
+  "next_test": "single best real-world follow-up test or observation"
+}
+
+Confidence scale:
+1 = weak guess
+2 = plausible
+3 = moderate
+4 = strong
+5 = very strong
 """
 
-OBSERVER = SYSTEM + """
-Return JSON:
+JUDGE_PROMPT = """
+You are comparing candidate geological image identifications.
+Use only the evidence supplied.
+Do not choose the most eloquent answer. Choose the answer best grounded in visible observations.
+
+Return valid JSON only:
 {
-  "id": "",
-  "confidence": 1,
-  "reason": "",
-  "next": ""
+  "winner": "openai or claude or gemini",
+  "why": "short explanation",
+  "final_confidence": 1,
+  "agreement": "high or moderate or low"
 }
-"""
+""".strip()
 
 LESSON_PROMPT = """
 Create a short geology lesson plan based on this material identification.
 
-Material: {id}
-Reason: {reason}
+Material: {candidate}
+Why: {why}
+Observations: {observations}
 
 Include:
 - Learning objective
 - Activity
 - Assessment question
 - Time estimate
-"""
+""".strip()
 
 # =========================================================
 # STATE
@@ -60,6 +94,8 @@ def init_state():
         "obs": None,
         "lesson_plan": None,
         "uploaded_name": None,
+        "raw_results": {},
+        "selected_mode": "Cost-aware balanced",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -77,84 +113,45 @@ def get_secret(name: str, default: str = "") -> str:
     except Exception:
         return default
 
+
 def get_app_password() -> str:
     return get_secret("APP_PASSWORD", "")
+
 
 def encode_image(file) -> str:
     return base64.b64encode(file.getvalue()).decode()
 
-def call_openai_json(prompt: str, img_b64: str | None = None) -> str:
-    key = get_secret("OPENAI_API_KEY", "")
-    if not key:
-        raise RuntimeError("Missing OPENAI_API_KEY in Streamlit secrets.")
 
-    content = [{"type": "text", "text": "Analyze this image."}]
-    if img_b64:
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{img_b64}"}
-        })
-
-    payload = {
-        "model": OPENAI_MODEL,
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": content}
-        ]
-    }
-
-    r = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        },
-        json=payload,
-        timeout=60
-    )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
-
-def call_openai_text(prompt: str) -> str:
-    key = get_secret("OPENAI_API_KEY", "")
-    if not key:
-        raise RuntimeError("Missing OPENAI_API_KEY in Streamlit secrets.")
-
-    payload = {
-        "model": OPENAI_MODEL,
-        "temperature": 0.3,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a helpful geology education assistant. Be concise and clear."
-            },
-            {"role": "user", "content": prompt}
-        ]
-    }
-
-    r = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json"
-        },
-        json=payload,
-        timeout=60
-    )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
-
-def parse_observation(raw: str):
+def safe_json_loads(text: str) -> Optional[Dict[str, Any]]:
     try:
-        return json.loads(raw)
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # fallback: pull first json object
+    try:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return json.loads(text[start:end + 1])
     except Exception:
         return None
+    return None
+
 
 def display_name() -> str:
     name = st.session_state.username.strip()
     return name if name else "Friend"
+
+
+def available_providers() -> Dict[str, bool]:
+    return {
+        "openai": bool(get_secret("OPENAI_API_KEY", "")),
+        "claude": bool(get_secret("ANTHROPIC_API_KEY", "")),
+        "gemini": bool(get_secret("GEMINI_API_KEY", "")),
+        "perplexity": bool(get_secret("PERPLEXITY_API_KEY", "")),
+    }
+
 
 def render_audio_button(text_to_speak: str):
     safe_text = html.escape(text_to_speak).replace("\n", " ")
@@ -179,6 +176,357 @@ def render_audio_button(text_to_speak: str):
         """,
         height=58,
     )
+
+
+# =========================================================
+# API CALLS
+# =========================================================
+
+def call_openai_json(prompt: str, img_b64: Optional[str] = None, model: str = OPENAI_MODEL_FAST) -> str:
+    key = get_secret("OPENAI_API_KEY", "")
+    if not key:
+        raise RuntimeError("Missing OPENAI_API_KEY in Streamlit secrets.")
+
+    content = [{"type": "text", "text": "Analyze this geology image carefully."}]
+    if img_b64:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{img_b64}"}
+        })
+
+    payload = {
+        "model": model,
+        "temperature": 0.1,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": content}
+        ]
+    }
+
+    r = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json"
+        },
+        json=payload,
+        timeout=TIMEOUT
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
+def call_openai_text(prompt: str, model: str = OPENAI_MODEL_FAST) -> str:
+    key = get_secret("OPENAI_API_KEY", "")
+    if not key:
+        raise RuntimeError("Missing OPENAI_API_KEY in Streamlit secrets.")
+
+    payload = {
+        "model": model,
+        "temperature": 0.2,
+        "messages": [
+            {"role": "system", "content": "You are a concise geology education assistant."},
+            {"role": "user", "content": prompt}
+        ]
+    }
+
+    r = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json"
+        },
+        json=payload,
+        timeout=TIMEOUT
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
+def call_claude_json(prompt: str, img_b64: str) -> str:
+    key = get_secret("ANTHROPIC_API_KEY", "")
+    if not key:
+        raise RuntimeError("Missing ANTHROPIC_API_KEY in Streamlit secrets.")
+
+    payload = {
+        "model": CLAUDE_MODEL,
+        "max_tokens": 900,
+        "temperature": 0.1,
+        "system": prompt,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": img_b64,
+                    },
+                },
+                {
+                    "type": "text",
+                    "text": "Analyze this geology image and return only the requested JSON.",
+                },
+            ],
+        }],
+    }
+
+    r = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json=payload,
+        timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+    data = r.json()
+    parts = data.get("content", [])
+    return "".join(p.get("text", "") for p in parts if p.get("type") == "text")
+
+
+def call_gemini_json(prompt: str, img_b64: str) -> str:
+    key = get_secret("GEMINI_API_KEY", "")
+    if not key:
+        raise RuntimeError("Missing GEMINI_API_KEY in Streamlit secrets.")
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={key}"
+    payload = {
+        "generationConfig": {
+            "temperature": 0.1,
+            "responseMimeType": "application/json"
+        },
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {
+                    "inline_data": {
+                        "mime_type": "image/png",
+                        "data": img_b64
+                    }
+                }
+            ]
+        }]
+    }
+
+    r = requests.post(url, json=payload, timeout=TIMEOUT)
+    r.raise_for_status()
+    data = r.json()
+    return data["candidates"][0]["content"]["parts"][0]["text"]
+
+
+def call_perplexity_text(prompt: str) -> str:
+    key = get_secret("PERPLEXITY_API_KEY", "")
+    if not key:
+        raise RuntimeError("Missing PERPLEXITY_API_KEY in Streamlit secrets.")
+
+    payload = {
+        "model": PERPLEXITY_MODEL,
+        "temperature": 0.0,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a concise geology helper. Use only provided content. Do not browse."
+            },
+            {"role": "user", "content": prompt}
+        ]
+    }
+
+    r = requests.post(
+        "https://api.perplexity.ai/chat/completions",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json"
+        },
+        json=payload,
+        timeout=TIMEOUT
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
+# =========================================================
+# ROUTING LOGIC
+# =========================================================
+
+def normalize_result(data: Dict[str, Any], provider: str) -> Dict[str, Any]:
+    return {
+        "provider": provider,
+        "candidate": str(data.get("candidate", "")).strip(),
+        "alternate": str(data.get("alternate", "none")).strip(),
+        "confidence": int(data.get("confidence", 1) or 1),
+        "observations": data.get("observations", []) if isinstance(data.get("observations", []), list) else [],
+        "why": str(data.get("why", "")).strip(),
+        "limits": str(data.get("limits", "")).strip(),
+        "next_test": str(data.get("next_test", "")).strip(),
+    }
+
+
+def provider_pass(provider: str, img_b64: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    try:
+        if provider == "openai":
+            raw = call_openai_json(PRIMARY_OBSERVER, img_b64, OPENAI_MODEL_FAST)
+        elif provider == "claude":
+            raw = call_claude_json(PRIMARY_OBSERVER, img_b64)
+        elif provider == "gemini":
+            raw = call_gemini_json(PRIMARY_OBSERVER, img_b64)
+        else:
+            return None, f"Unsupported provider: {provider}"
+
+        parsed = safe_json_loads(raw)
+        if not parsed:
+            return None, f"{provider} returned unreadable JSON"
+        return normalize_result(parsed, provider), None
+    except Exception as e:
+        return None, f"{provider}: {e}"
+
+
+def build_judge_input(results: Dict[str, Dict[str, Any]]) -> str:
+    packed = {
+        name: {
+            "candidate": r.get("candidate"),
+            "alternate": r.get("alternate"),
+            "confidence": r.get("confidence"),
+            "observations": r.get("observations"),
+            "why": r.get("why"),
+            "limits": r.get("limits"),
+            "next_test": r.get("next_test"),
+        }
+        for name, r in results.items()
+    }
+    return json.dumps(packed, indent=2)
+
+
+def judge_results(results: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    judge_payload = (
+        "Compare these candidate interpretations of the same geology image.\n\n"
+        f"{build_judge_input(results)}"
+    )
+    raw = call_openai_json(JUDGE_PROMPT + "\n\n" + judge_payload, None, OPENAI_MODEL_STRONG)
+    parsed = safe_json_loads(raw)
+    if not parsed:
+        return {"winner": "openai", "why": "Judge fallback used.", "final_confidence": 2, "agreement": "low"}
+    return parsed
+
+
+def build_consensus(primary: Dict[str, Any], secondary: Optional[Dict[str, Any]], judge: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if secondary is None:
+        return {
+            "candidate": primary.get("candidate", ""),
+            "alternate": primary.get("alternate", "none"),
+            "confidence": primary.get("confidence", 1),
+            "observations": primary.get("observations", []),
+            "why": primary.get("why", ""),
+            "limits": primary.get("limits", ""),
+            "next_test": primary.get("next_test", ""),
+            "agreement": "single-model",
+            "winner": primary.get("provider", "openai"),
+        }
+
+    if judge:
+        winner = judge.get("winner", primary.get("provider", "openai"))
+        chosen = primary if primary.get("provider") == winner else secondary
+        other = secondary if chosen is primary else primary
+
+        combined_observations = chosen.get("observations", [])[:]
+        for item in other.get("observations", []):
+            if item not in combined_observations and len(combined_observations) < 5:
+                combined_observations.append(item)
+
+        return {
+            "candidate": chosen.get("candidate", ""),
+            "alternate": chosen.get("alternate", "none"),
+            "confidence": judge.get("final_confidence", chosen.get("confidence", 1)),
+            "observations": combined_observations,
+            "why": chosen.get("why", ""),
+            "limits": chosen.get("limits", ""),
+            "next_test": chosen.get("next_test", ""),
+            "agreement": judge.get("agreement", "moderate"),
+            "winner": winner,
+        }
+
+    return {
+        "candidate": primary.get("candidate", ""),
+        "alternate": primary.get("alternate", "none"),
+        "confidence": primary.get("confidence", 1),
+        "observations": primary.get("observations", []),
+        "why": primary.get("why", ""),
+        "limits": primary.get("limits", ""),
+        "next_test": primary.get("next_test", ""),
+        "agreement": "moderate",
+        "winner": primary.get("provider", "openai"),
+    }
+
+
+def analyze_image(img_b64: str, mode: str) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+    providers = available_providers()
+    details: Dict[str, Any] = {"errors": [], "raw_results": {}, "mode": mode}
+
+    if not providers["openai"]:
+        raise RuntimeError("OPENAI_API_KEY is required because OpenAI is used as the primary router/judge.")
+
+    openai_result, err = provider_pass("openai", img_b64)
+    if err:
+        details["errors"].append(err)
+        raise RuntimeError("Primary OpenAI vision pass failed.")
+    details["raw_results"]["openai"] = openai_result
+
+    secondary_result = None
+    judge = None
+
+    if mode == "Lowest cost":
+        return build_consensus(openai_result, None, None), details
+
+    secondary_provider = None
+    if mode == "Cost-aware balanced":
+        if providers["gemini"]:
+            secondary_provider = "gemini"
+        elif providers["claude"]:
+            secondary_provider = "claude"
+    elif mode == "Max accuracy":
+        if providers["claude"]:
+            secondary_provider = "claude"
+        elif providers["gemini"]:
+            secondary_provider = "gemini"
+
+    if secondary_provider:
+        secondary_result, err = provider_pass(secondary_provider, img_b64)
+        if err:
+            details["errors"].append(err)
+        elif secondary_result:
+            details["raw_results"][secondary_provider] = secondary_result
+            judge = judge_results({
+                "openai": openai_result,
+                secondary_provider: secondary_result,
+            })
+            details["judge"] = judge
+
+    consensus = build_consensus(openai_result, secondary_result, judge)
+
+    # optional explanation polish using Perplexity only as a text simplifier, not identifier
+    if mode == "Max accuracy" and providers["perplexity"]:
+        try:
+            explain_prompt = (
+                "Rewrite this geology explanation more clearly for a student. "
+                "Do not add any new facts. Keep it under 90 words.\n\n"
+                f"Candidate: {consensus['candidate']}\n"
+                f"Observations: {consensus['observations']}\n"
+                f"Why: {consensus['why']}\n"
+                f"Limits: {consensus['limits']}"
+            )
+            polished = call_perplexity_text(explain_prompt)
+            if polished:
+                consensus["why"] = polished.strip()
+                details["used_perplexity_for_explanation"] = True
+        except Exception as e:
+            details["errors"].append(f"perplexity explanation pass: {e}")
+
+    return consensus, details
+
 
 # =========================================================
 # STYLES
@@ -338,33 +686,36 @@ def render_header():
     """, unsafe_allow_html=True)
 
 # =========================================================
-# PRO FEATURES
+# ROUTING PANEL
 # =========================================================
 
-def render_pro_features():
-    st.markdown('<div class="section-label">2. Pro Features</div>', unsafe_allow_html=True)
+def render_router_section():
+    st.markdown('<div class="section-label">2. Analysis Routing</div>', unsafe_allow_html=True)
+    providers = available_providers()
+
+    mode = st.radio(
+        "Choose analysis mode",
+        ["Lowest cost", "Cost-aware balanced", "Max accuracy"],
+        index=["Lowest cost", "Cost-aware balanced", "Max accuracy"].index(st.session_state.selected_mode),
+        horizontal=True,
+    )
+    st.session_state.selected_mode = mode
 
     st.markdown("""
     <div class="pro-card">
         <div class="small-note">
-            These features are visible by design and remain locked until enabled in a future paid version.
+            Lowest cost = OpenAI only.<br>
+            Cost-aware balanced = OpenAI first, Gemini second if available, then OpenAI judge.<br>
+            Max accuracy = OpenAI first, Claude second if available, then OpenAI judge. Perplexity is used only to polish explanation text, not to identify the sample.
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        st.button("Use multiple APIs", disabled=True, use_container_width=True)
-        st.button("Upload lesson materials", disabled=True, use_container_width=True)
-
-    with c2:
-        st.button("Create lesson plan", disabled=True, use_container_width=True)
-        st.button("Save results", disabled=True, use_container_width=True)
-
-    with c3:
-        st.button("View analytics", disabled=True, use_container_width=True)
-        st.button("See roadmap", disabled=True, use_container_width=True)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("OpenAI", "Ready" if providers["openai"] else "Missing")
+    c2.metric("Claude", "Ready" if providers["claude"] else "Missing")
+    c3.metric("Gemini", "Ready" if providers["gemini"] else "Missing")
+    c4.metric("Perplexity", "Ready" if providers["perplexity"] else "Missing")
 
 # =========================================================
 # USER INFO
@@ -412,15 +763,10 @@ def render_analyze_section(uploaded_file):
     if st.button("Analyze", use_container_width=False):
         try:
             img_b64 = encode_image(uploaded_file)
-            raw = call_openai_json(OBSERVER, img_b64)
-            obs = parse_observation(raw)
-
-            if not obs:
-                st.error("The model returned an unreadable response.")
-            else:
-                st.session_state.obs = obs
-                st.session_state.lesson_plan = None
-
+            consensus, details = analyze_image(img_b64, st.session_state.selected_mode)
+            st.session_state.obs = consensus
+            st.session_state.raw_results = details
+            st.session_state.lesson_plan = None
         except requests.RequestException as e:
             st.error(f"Request error: {e}")
         except Exception as e:
@@ -445,13 +791,20 @@ def render_result_section():
     </div>
     """, unsafe_allow_html=True)
 
+    obs_html = "".join(f"<li>{html.escape(str(item))}</li>" for item in obs.get("observations", []))
+
     st.markdown(f"""
     <div class="output-box">
         <div class="box-label">GIA</div>
-        <div><strong>Likely identification:</strong> {obs.get('id', '')}</div>
-        <div style="margin-top:0.4rem;"><strong>Confidence:</strong> {obs.get('confidence', '')} out of 5</div>
-        <div style="margin-top:0.7rem;"><strong>Reasoning:</strong> {obs.get('reason', '')}</div>
-        <div style="margin-top:0.7rem;"><strong>Next step:</strong> {obs.get('next', '')}</div>
+        <div><strong>Likely identification:</strong> {html.escape(obs.get('candidate', ''))}</div>
+        <div style="margin-top:0.4rem;"><strong>Alternate:</strong> {html.escape(obs.get('alternate', ''))}</div>
+        <div style="margin-top:0.4rem;"><strong>Confidence:</strong> {html.escape(str(obs.get('confidence', '')))} out of 5</div>
+        <div style="margin-top:0.4rem;"><strong>Agreement:</strong> {html.escape(obs.get('agreement', ''))}</div>
+        <div style="margin-top:0.4rem;"><strong>Chosen model:</strong> {html.escape(obs.get('winner', ''))}</div>
+        <div style="margin-top:0.7rem;"><strong>Visible observations:</strong><ul>{obs_html}</ul></div>
+        <div style="margin-top:0.7rem;"><strong>Why this fit:</strong> {html.escape(obs.get('why', ''))}</div>
+        <div style="margin-top:0.7rem;"><strong>Limits:</strong> {html.escape(obs.get('limits', ''))}</div>
+        <div style="margin-top:0.7rem;"><strong>Best next test:</strong> {html.escape(obs.get('next_test', ''))}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -468,10 +821,11 @@ def render_audio_section():
     st.markdown('<div class="section-label">7. Optional Audio</div>', unsafe_allow_html=True)
 
     speech_text = (
-        f"Likely identification: {obs.get('id', '')}. "
+        f"Likely identification: {obs.get('candidate', '')}. "
+        f"Alternate: {obs.get('alternate', '')}. "
         f"Confidence: {obs.get('confidence', '')} out of 5. "
-        f"Reasoning: {obs.get('reason', '')}. "
-        f"Next step: {obs.get('next', '')}."
+        f"Why: {obs.get('why', '')}. "
+        f"Next test: {obs.get('next_test', '')}."
     )
     render_audio_button(speech_text)
 
@@ -486,29 +840,35 @@ def render_dev_tools():
         st.write("These tools are for testing only and are not part of the standard student view.")
 
         if not st.session_state.obs:
-            st.write("Analyze an image first to test lesson plan and save tools.")
+            st.write("Analyze an image first to test lesson plan and export tools.")
             return
 
         obs = st.session_state.obs
+        details = st.session_state.raw_results or {}
         c1, c2 = st.columns(2)
 
         with c1:
             if st.button("Generate lesson plan now", use_container_width=True):
                 prompt = LESSON_PROMPT.format(
-                    id=obs.get("id", ""),
-                    reason=obs.get("reason", "")
+                    candidate=obs.get("candidate", ""),
+                    why=obs.get("why", ""),
+                    observations=", ".join(obs.get("observations", []))
                 )
                 try:
-                    st.session_state.lesson_plan = call_openai_text(prompt)
+                    st.session_state.lesson_plan = call_openai_text(prompt, OPENAI_MODEL_FAST)
                 except requests.RequestException as e:
                     st.error(f"Request error: {e}")
                 except Exception as e:
                     st.error(f"Unexpected error: {e}")
 
         with c2:
+            export_payload = {
+                "final": obs,
+                "details": details,
+            }
             st.download_button(
                 "Download current result as JSON",
-                data=json.dumps(obs, indent=2),
+                data=json.dumps(export_payload, indent=2),
                 file_name="gia_result.json",
                 use_container_width=True
             )
@@ -518,9 +878,13 @@ def render_dev_tools():
             <div class="output-box">
                 <div class="box-label">GIA</div>
                 <div><strong>Lesson plan</strong></div>
-                <div style="margin-top:0.7rem;">{st.session_state.lesson_plan}</div>
+                <div style="margin-top:0.7rem;">{html.escape(st.session_state.lesson_plan)}</div>
             </div>
             """, unsafe_allow_html=True)
+
+        if details:
+            st.write("Raw routing details")
+            st.json(details)
 
 # =========================================================
 # MAIN
@@ -531,7 +895,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 render_header()
-render_pro_features()
+render_router_section()
 render_user_section()
 uploaded_file = render_upload_section()
 render_analyze_section(uploaded_file)
