@@ -40,9 +40,9 @@ Material: {id}
 Reason: {reason}
 
 Include:
-- Objective
+- Learning objective
 - Activity
-- Assessment
+- Assessment question
 - Time estimate
 """
 
@@ -82,27 +82,54 @@ def call_openai(prompt, img=None):
     return r.json()["choices"][0]["message"]["content"]
 
 # =============================
-# UI
+# UI SETUP (ACCESSIBLE)
 # =============================
 
 st.set_page_config(layout="wide", page_title="GIAp")
 
-st.markdown("## 🪨 GIAp")
-st.caption("Earth Material Identifier")
+st.markdown("""
+<style>
+body {
+    color: #111;
+}
 
-# Toggle for demo
-is_pro = st.sidebar.toggle("Pro Mode (demo)", value=False)
+h1, h2, h3 {
+    color: #111;
+}
+
+.block {
+    background: #FFFFFF;
+    border: 1px solid #DDD;
+    padding: 1rem;
+    border-radius: 10px;
+    margin-bottom: 1rem;
+}
+
+.locked {
+    opacity: 0.5;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # =============================
-# FREE SECTION
+# HEADER
 # =============================
 
-st.markdown("### Identify Sample")
+st.title("🪨 GIAp")
+st.write("Earth Material Identifier")
+
+# =============================
+# FREE TIER
+# =============================
+
+st.markdown("## Identify Sample")
 
 file = st.file_uploader(
     "Upload image (rock, mineral, fossil)",
     type=["png", "jpg", "jpeg"]
 )
+
+obs = None
 
 if file:
     img = Image.open(file)
@@ -110,7 +137,6 @@ if file:
 
     if st.button("Analyze"):
         b64 = encode(file)
-
         raw = call_openai(OBSERVER, b64)
 
         try:
@@ -119,7 +145,6 @@ if file:
             st.error("Model error")
             st.stop()
 
-        # ===== FREE RESULT =====
         st.markdown("### Result")
 
         st.write(f"**Likely ID:** {obs['id']}")
@@ -127,54 +152,70 @@ if file:
         st.write(obs["reason"])
         st.info(f"Next step: {obs['next']}")
 
-        # =============================
-        # PRO PANEL (VISIBLE ALWAYS)
-        # =============================
+# =============================
+# PRO FEATURES (VISIBLE + LOCKED)
+# =============================
 
-        st.markdown("---")
-        st.markdown("### 🔒 Pro Tools")
+if obs:
+    st.markdown("---")
+    st.markdown("## 🔒 Pro Features")
 
-        col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2)
 
-        # MULTI MODEL
-        with col1:
-            if is_pro:
-                if st.button("Run Multi-Model Validation"):
-                    st.info("Coming soon")
-            else:
-                st.button("Run Multi-Model Validation", disabled=True)
-                st.caption("Pro feature")
+    # LESSON PLAN (WORKING)
+    with col1:
+        st.markdown("### 📘 Lesson Plan")
+        st.button("Generate Lesson Plan", disabled=True)
+        st.caption("Available in Pro")
 
-        # LESSON PLAN
-        with col2:
-            if is_pro:
-                if st.button("Generate Lesson Plan"):
-                    prompt = LESSON_PROMPT.format(
-                        id=obs['id'],
-                        reason=obs['reason']
-                    )
-                    lesson = call_openai(prompt)
-                    st.markdown("#### Lesson Plan")
-                    st.write(lesson)
-            else:
-                st.button("Generate Lesson Plan", disabled=True)
-                st.caption("Pro feature")
+    # SAVE RESULTS (WORKING)
+    with col2:
+        st.markdown("### 💾 Save Results")
+        st.button("Download Results", disabled=True)
+        st.caption("Available in Pro")
 
-        # SAVE
-        if is_pro:
+    # =============================
+    # OPTIONAL: TURN ON REAL FEATURES FOR TESTING
+    # =============================
+
+    with st.expander("Developer Test (enable features)"):
+        enable = st.checkbox("Enable Pro Features")
+
+        if enable:
+
+            st.markdown("### 📘 Lesson Plan")
+
+            if st.button("Generate Lesson Plan (Active)"):
+                prompt = LESSON_PROMPT.format(
+                    id=obs['id'],
+                    reason=obs['reason']
+                )
+                lesson = call_openai(prompt)
+
+                st.write(lesson)
+
+            st.markdown("### 💾 Save Results")
+
             st.download_button(
-                "Download Results",
+                "Download JSON",
                 data=json.dumps(obs, indent=2),
                 file_name="gia_result.json"
             )
-        else:
-            st.button("Download Results", disabled=True)
-            st.caption("Pro feature")
 
-        # FUTURE FEATURES
-        st.markdown("### 🚀 Coming Soon")
-        st.markdown("""
-        - Class analytics  
-        - Adaptive quizzes  
-        - Assignment builder  
-        """)
+            st.markdown("### 🔍 Multi-Model")
+            if st.button("Run Multi-Model (placeholder)"):
+                st.info("Will connect OpenAI + Claude")
+
+# =============================
+# FUTURE FEATURES
+# =============================
+
+if obs:
+    st.markdown("### 🚀 Coming Soon")
+
+    st.markdown("""
+    - Class analytics  
+    - Adaptive quizzes  
+    - Assignment builder  
+    - Lab report generator  
+    """)
