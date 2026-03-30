@@ -3,6 +3,7 @@ import requests
 import base64
 import json
 from PIL import Image
+import html
 
 # =============================
 # CONFIG
@@ -82,7 +83,7 @@ def call_openai(prompt, img=None):
     return r.json()["choices"][0]["message"]["content"]
 
 # =============================
-# UI SETUP (ACCESSIBLE)
+# ACCESSIBLE STYLES
 # =============================
 
 st.set_page_config(layout="wide", page_title="GIAp")
@@ -91,23 +92,31 @@ st.markdown("""
 <style>
 body {
     color: #111;
+    background-color: #FFFFFF;
+    font-size: 16px;
 }
 
 h1, h2, h3 {
     color: #111;
 }
 
-.block {
-    background: #FFFFFF;
-    border: 1px solid #DDD;
+.section {
+    border: 1px solid #CCCCCC;
+    border-radius: 8px;
     padding: 1rem;
-    border-radius: 10px;
     margin-bottom: 1rem;
+    background: #FFFFFF;
 }
 
 .locked {
     opacity: 0.5;
 }
+
+button:disabled {
+    background-color: #E0E0E0 !important;
+    color: #666 !important;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -115,8 +124,8 @@ h1, h2, h3 {
 # HEADER
 # =============================
 
-st.title("🪨 GIAp")
-st.write("Earth Material Identifier")
+st.title("GIAp")
+st.caption("Earth Material Identifier")
 
 # =============================
 # FREE TIER
@@ -133,7 +142,7 @@ obs = None
 
 if file:
     img = Image.open(file)
-    st.image(img, caption="Uploaded sample", use_container_width=True)
+    st.image(img, caption="Uploaded sample image", use_container_width=True)
 
     if st.button("Analyze"):
         b64 = encode(file)
@@ -142,59 +151,81 @@ if file:
         try:
             obs = json.loads(raw)
         except:
-            st.error("Model error")
+            st.error("Model response error")
             st.stop()
 
-        st.markdown("### Result")
+        # =============================
+        # RESULT
+        # =============================
 
-        st.write(f"**Likely ID:** {obs['id']}")
-        st.write(f"**Confidence:** {obs['confidence']}/5")
+        st.markdown("## Result")
+
+        st.write(f"Likely identification: {obs['id']}")
+        st.write(f"Confidence: {obs['confidence']} out of 5")
         st.write(obs["reason"])
         st.info(f"Next step: {obs['next']}")
 
+        # =============================
+        # TEXT-TO-SPEECH (ACCESSIBILITY)
+        # =============================
+
+        speech_text = f"""
+        Likely identification: {obs['id']}.
+        Confidence: {obs['confidence']} out of 5.
+        {obs['reason']}.
+        Next step: {obs['next']}.
+        """
+
+        safe_text = html.escape(speech_text)
+
+        st.markdown("### Audio Output")
+
+        st.components.v1.html(f"""
+        <button onclick="speechSynthesis.speak(new SpeechSynthesisUtterance('{safe_text}'))">
+            Play Audio
+        </button>
+        """, height=50)
+
 # =============================
-# PRO FEATURES (VISIBLE + LOCKED)
+# PRO FEATURES (VISIBLE)
 # =============================
 
 if obs:
     st.markdown("---")
-    st.markdown("## 🔒 Pro Features")
+    st.markdown("## Pro Features")
 
     col1, col2 = st.columns(2)
 
-    # LESSON PLAN (WORKING)
     with col1:
-        st.markdown("### 📘 Lesson Plan")
-        st.button("Generate Lesson Plan", disabled=True)
+        st.markdown("Lesson plan generator")
+        st.button("Generate lesson plan", disabled=True)
         st.caption("Available in Pro")
 
-    # SAVE RESULTS (WORKING)
     with col2:
-        st.markdown("### 💾 Save Results")
-        st.button("Download Results", disabled=True)
+        st.markdown("Save results")
+        st.button("Download results", disabled=True)
         st.caption("Available in Pro")
 
     # =============================
-    # OPTIONAL: TURN ON REAL FEATURES FOR TESTING
+    # DEV ENABLE (FOR YOU ONLY)
     # =============================
 
-    with st.expander("Developer Test (enable features)"):
-        enable = st.checkbox("Enable Pro Features")
+    with st.expander("Enable Pro Features (developer)"):
+        enable = st.checkbox("Enable")
 
         if enable:
 
-            st.markdown("### 📘 Lesson Plan")
+            st.markdown("### Lesson Plan")
 
-            if st.button("Generate Lesson Plan (Active)"):
+            if st.button("Generate lesson plan (active)"):
                 prompt = LESSON_PROMPT.format(
                     id=obs['id'],
                     reason=obs['reason']
                 )
                 lesson = call_openai(prompt)
-
                 st.write(lesson)
 
-            st.markdown("### 💾 Save Results")
+            st.markdown("### Download")
 
             st.download_button(
                 "Download JSON",
@@ -202,16 +233,12 @@ if obs:
                 file_name="gia_result.json"
             )
 
-            st.markdown("### 🔍 Multi-Model")
-            if st.button("Run Multi-Model (placeholder)"):
-                st.info("Will connect OpenAI + Claude")
-
 # =============================
 # FUTURE FEATURES
 # =============================
 
 if obs:
-    st.markdown("### 🚀 Coming Soon")
+    st.markdown("## Planned Features")
 
     st.markdown("""
     - Class analytics  
