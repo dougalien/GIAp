@@ -1,22 +1,18 @@
-# GIAp — Improved UI + Pro Features (Readable Output, Zoom, Chat, Save Logs)
-
 import streamlit as st
 import requests
 import base64
 import json
 from datetime import datetime
 from PIL import Image
-from io import BytesIO
 
 # =============================
 # CONFIG
 # =============================
 
 OPENAI_MODEL = "gpt-4o"
-CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
 
 # =============================
-# PROMPTS (SAFE + CLEAN)
+# PROMPTS
 # =============================
 
 SYSTEM = """
@@ -25,13 +21,7 @@ You are a geology lab assistant.
 RULES:
 - Only use visible features.
 - If not visible → say "not observable".
-- Do NOT guess chemistry, hardness, or unseen properties.
 - Be concise.
-
-Confidence:
-1 = weak guess
-3 = uncertain
-5 = strong match
 """
 
 OBSERVER = SYSTEM + """
@@ -44,25 +34,17 @@ Return JSON:
 }
 """
 
-VALIDATOR = SYSTEM + """
-Return JSON:
-{
- "id": "",
- "confidence": 1,
- "agreement": "agree/partial/disagree",
- "reason": "",
- "next": ""
-}
-"""
+LESSON_PROMPT = """
+Create a short geology lesson plan based on this identification:
 
-JUDGE = SYSTEM + """
-Return JSON:
-{
- "final": "",
- "confidence": 1,
- "reply": "short student answer",
- "next": ""
-}
+Material: {id}
+Reason: {reason}
+
+Include:
+- Learning objective
+- Activity
+- Assessment question
+- Time estimate
 """
 
 # =============================
@@ -72,23 +54,23 @@ Return JSON:
 def encode(file):
     return base64.b64encode(file.getvalue()).decode()
 
-
-def call_openai(prompt, img):
+def call_openai(prompt, img=None):
     key = st.secrets["OPENAI_API_KEY"]
+
+    content = [{"type": "text", "text": "Analyze."}]
+
+    if img:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{img}"}
+        })
 
     payload = {
         "model": OPENAI_MODEL,
         "temperature": 0.2,
-        "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": prompt},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Analyze."},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img}"}}
-                ]
-            }
+            {"role": "user", "content": content}
         ]
     }
 
@@ -98,270 +80,153 @@ def call_openai(prompt, img):
         json=payload
     )
 
-    return json.loads(r.json()["choices"][0]["message"]["content"])
+    return r.json()["choices"][0]["message"]["content"]
 
+# =============================
+# UI STYLES (ACCESSIBLE)
+# =============================
 
-def call_claude(prompt, img):
-    key = st.secrets["CLAUDE_API_KEY"]
-
-    payload = {
-        "model": CLAUDE_MODEL,
-        "max_tokens": 800,
-        "system": prompt,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Analyze."},
-                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img}}
-            ]
-        }]
+def apply_styles():
+    st.markdown("""
+    <style>
+    .main-card {
+        background: #FFFFFF;
+        border: 1px solid #CCCCCC;
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 1rem;
     }
 
-    r = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
-        json=payload
-    )
+    .answer-box {
+        background: #FFFFFF;
+        border-left: 5px solid #2F6B5F;
+        padding: 1rem;
+        color: #111111;
+    }
 
-    return json.loads(r.json()["content"][0]["text"])
+    .locked {
+        opacity: 0.5;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # =============================
-# AUTH
+# COMPONENTS
 # =============================
 
-def get_app_password():
-    try:
-        return st.secrets.get("APP_PASSWORD", "")
-    except Exception:
-        return ""
-
-
-def ensure_auth():
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
-    if "login_error" not in st.session_state:
-        st.session_state.login_error = ""
-
-    if st.session_state.authenticated:
-        return
-
+def render_header():
     st.markdown("""
-    <div class="main-card" style="max-width:520px; margin:3rem auto;">
-        <div class="soft-label">Login</div>
-        <h2 style="margin-top:0.25rem; margin-bottom:0.35rem;">Welcome to GIAp</h2>
-        <div style="color:#5B6570; margin-bottom:1rem;">Enter the app password to continue.</div>
+    <div class="main-card">
+        <h1>🪨 GIAp</h1>
+        <div>Earth Material Identifier</div>
     </div>
     """, unsafe_allow_html=True)
 
-    with st.form("login_form"):
-        entered = st.text_input("Password", type="password", placeholder="Enter password")
-        submitted = st.form_submit_button("Enter", use_container_width=True)
+def render_upload():
+    return st.file_uploader("Upload image (rock, mineral, fossil)", type=["png","jpg","jpeg"])
 
-    actual = get_app_password()
+def render_image(img):
+    st.image(img, caption="Uploaded sample", use_container_width=True)
 
-    if submitted:
-        if not actual:
-            st.session_state.login_error = "APP_PASSWORD is missing from Streamlit secrets."
-        elif entered == actual:
-            st.session_state.authenticated = True
-            st.session_state.login_error = ""
-            st.rerun()
-        else:
-            st.session_state.login_error = "Incorrect password."
-
-    if st.session_state.login_error:
-        st.error(st.session_state.login_error)
-
-    st.stop()
-
-# =============================
-# STATE
-# =============================
-
-ensure_auth()
-
-if "chat" not in st.session_state:
-    st.session_state.chat = []
-
-# =============================
-# UI
-# =============================
-
-st.set_page_config(layout="wide", page_title="GIAp")
-
-st.markdown("""
-<style>
-.stApp {
-    background: linear-gradient(180deg, #F7F4EF 0%, #EDE6DA 100%);
-    color: #1F2933;
-}
-
-[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #E5DED0 0%, #D8CFBF 100%);
-}
-
-.main-card {
-    background: rgba(255,255,255,0.82);
-    border: 1px solid #C8BFAF;
-    border-radius: 18px;
-    padding: 1rem 1.2rem;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.08);
-    margin-bottom: 1rem;
-}
-
-.answer-box {
-    background: #F8FBF8;
-    border-left: 6px solid #2F6B5F;
-    border-radius: 12px;
-    padding: 1rem;
-    color: #1F2933;
-}
-
-.next-box {
-    background: #F6F1E8;
-    border-left: 6px solid #8C6A43;
-    border-radius: 12px;
-    padding: 0.9rem;
-    color: #1F2933;
-}
-
-.chat-user {
-    background: #EAF2F8;
-    border-radius: 12px;
-    padding: 0.75rem;
-    margin: 0.4rem 0;
-    border: 1px solid #B8C7D9;
-}
-
-.chat-ai {
-    background: #EEF5EE;
-    border-radius: 12px;
-    padding: 0.75rem;
-    margin: 0.4rem 0;
-    border: 1px solid #B9D1BF;
-}
-
-.soft-label {
-    font-size: 0.84rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: #5B6570;
-}
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-<div class="main-card">
-    <h1 style="margin-bottom:0.2rem;">🪨 GIAp</h1>
-    <div style="color:#5B6570;">Earth Material Identifier</div>
-</div>
-""", unsafe_allow_html=True)
-
-# Tier
-mode = st.sidebar.radio("Tier", ["Free", "Pro"])
-
-if st.sidebar.button("Sign out", use_container_width=True):
-    st.session_state.authenticated = False
-    st.session_state.login_error = ""
-    st.rerun()
-
-# Pro settings
-if mode == "Pro":
-    st.sidebar.subheader("Pro Controls")
-    zoom = st.sidebar.slider("Zoom", 1.0, 3.0, 1.0)
-    user_name = st.sidebar.text_input("User name")
-
-# Upload
-file = st.file_uploader("Upload image", type=["png","jpg","jpeg"])
-
-# Display image with zoom
-if file:
-    img = Image.open(file)
-
-    if mode == "Pro":
-        w, h = img.size
-        crop = img.crop((w*(1-1/zoom)/2, h*(1-1/zoom)/2, w*(1+1/zoom)/2, h*(1+1/zoom)/2))
-        st.image(crop, use_container_width=True)
-        img_to_send = crop
-    else:
-        st.image(img, use_container_width=True)
-        img_to_send = img
-
-    if st.button("Analyze"):
-        b64 = encode(file)
-
-        obs = call_openai(OBSERVER, b64)
-
-        if mode == "Free":
-            st.markdown("""
-<div class="main-card">
-    <div class="soft-label">Answer</div>
-    <div class="answer-box">
-        <div><strong>Likely ID:</strong> """ + str(obs['id']) + """</div>
-        <div style="margin-top:0.35rem;"><strong>Confidence:</strong> """ + str(obs['confidence']) + """/5</div>
-        <div style="margin-top:0.6rem;">""" + str(obs['reason']) + """</div>
+def render_free(obs):
+    st.markdown(f"""
+    <div class="main-card">
+        <div class="answer-box">
+            <strong>Likely ID:</strong> {obs['id']}<br>
+            <strong>Confidence:</strong> {obs['confidence']}/5<br><br>
+            {obs['reason']}
+        </div>
+        <div><strong>Next step:</strong> {obs['next']}</div>
     </div>
-    <div class="next-box" style="margin-top:0.8rem;"><strong>Next step:</strong> """ + str(obs['next']) + """</div>
-</div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
-        else:
-            val = call_claude(VALIDATOR, b64)
-            judge = call_openai(JUDGE, b64)
+def render_pro_locked():
+    st.markdown("""
+    <div class="main-card locked">
+        <strong>🔒 Pro Features</strong>
+        <ul>
+            <li>Multi-model validation</li>
+            <li>Zoom analysis</li>
+            <li>Follow-up chat</li>
+            <li>Session saving</li>
+            <li>Lesson plan generator</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
+
+def render_lesson_plan(obs, is_pro):
+    if is_pro:
+        if st.button("Generate Lesson Plan"):
+            prompt = LESSON_PROMPT.format(id=obs['id'], reason=obs['reason'])
+            lesson = call_openai(prompt)
 
             st.markdown("""
-<div class="main-card">
-    <div class="soft-label">Final Answer</div>
-    <div class="answer-box">""" + str(judge['reply']) + """</div>
-</div>
-""", unsafe_allow_html=True)
-            st.metric("Confidence", judge['confidence'])
-            st.markdown("""
-<div class="next-box"><strong>Next step:</strong> """ + str(judge['next']) + """</div>
-""", unsafe_allow_html=True)
+            <div class="main-card">
+            <strong>Lesson Plan</strong>
+            """, unsafe_allow_html=True)
 
-            with st.expander("Details"):
-                st.json(obs)
-                st.json(val)
-
-            # Save to chat
-            st.session_state.chat.append({
-                "time": str(datetime.now()),
-                "user": user_name,
-                "result": judge
-            })
+            st.write(lesson)
+            st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="main-card locked">
+            🔒 Lesson Plan Generator (Pro)
+        </div>
+        """, unsafe_allow_html=True)
 
 # =============================
-# CHAT
+# MAIN APP
 # =============================
 
-if mode == "Pro":
-    st.markdown("---")
-    st.subheader("Follow-up Chat")
+def main():
+    st.set_page_config(page_title="GIAp", layout="wide")
+    apply_styles()
+    render_header()
 
-    msg = st.text_input("Ask a question")
+    is_pro = st.sidebar.checkbox("Enable Pro (demo)")
 
-    if st.button("Send"):
-        st.session_state.chat.append({"user_msg": msg})
+    file = render_upload()
 
-    for item in st.session_state.chat:
-        if 'user_msg' in item:
-            st.markdown(f"<div class='chat-user'><strong>You:</strong> {item['user_msg']}</div>", unsafe_allow_html=True)
-        elif 'result' in item:
-            reply = item['result'].get('reply', '')
-            st.markdown(f"<div class='chat-ai'><strong>GIAp:</strong> {reply}</div>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<div class='chat-ai'>{item}</div>", unsafe_allow_html=True)
+    if file:
+        img = Image.open(file)
+        render_image(img)
+
+        if st.button("Analyze"):
+            b64 = encode(file)
+            obs_raw = call_openai(OBSERVER, b64)
+
+            try:
+                obs = json.loads(obs_raw)
+            except:
+                st.error("Model response error")
+                return
+
+            render_free(obs)
+
+            if is_pro:
+                st.success("Pro features unlocked")
+            else:
+                render_pro_locked()
+
+            render_lesson_plan(obs, is_pro)
+
+            render_future()
+
+def render_future():
+    st.markdown("""
+    <div class="main-card locked">
+        <strong>Coming Soon</strong>
+        <ul>
+            <li>Class analytics</li>
+            <li>Adaptive quizzes</li>
+            <li>Lab report generator</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
 
 # =============================
-# SAVE LOG
+# RUN
 # =============================
 
-if mode == "Pro" and st.session_state.chat:
-    st.download_button(
-        "Download session",
-        data=json.dumps(st.session_state.chat, indent=2),
-        file_name="gia_session.json"
-    )
-
+if __name__ == "__main__":
+    main()
