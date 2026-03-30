@@ -2,7 +2,6 @@ import streamlit as st
 import requests
 import base64
 import json
-from datetime import datetime
 from PIL import Image
 
 # =============================
@@ -18,10 +17,10 @@ OPENAI_MODEL = "gpt-4o"
 SYSTEM = """
 You are a geology lab assistant.
 
-RULES:
-- Only use visible features.
-- If not visible → say "not observable".
-- Be concise.
+Rules:
+- Only use visible features
+- If unsure say "not observable"
+- Be concise
 """
 
 OBSERVER = SYSTEM + """
@@ -35,15 +34,15 @@ Return JSON:
 """
 
 LESSON_PROMPT = """
-Create a short geology lesson plan based on this identification:
+Create a short geology lesson plan.
 
 Material: {id}
 Reason: {reason}
 
 Include:
-- Learning objective
+- Objective
 - Activity
-- Assessment question
+- Assessment
 - Time estimate
 """
 
@@ -83,150 +82,99 @@ def call_openai(prompt, img=None):
     return r.json()["choices"][0]["message"]["content"]
 
 # =============================
-# UI STYLES (ACCESSIBLE)
+# UI
 # =============================
 
-def apply_styles():
-    st.markdown("""
-    <style>
-    .main-card {
-        background: #FFFFFF;
-        border: 1px solid #CCCCCC;
-        border-radius: 12px;
-        padding: 1rem;
-        margin-bottom: 1rem;
-    }
+st.set_page_config(layout="wide", page_title="GIAp")
 
-    .answer-box {
-        background: #FFFFFF;
-        border-left: 5px solid #2F6B5F;
-        padding: 1rem;
-        color: #111111;
-    }
+st.markdown("## 🪨 GIAp")
+st.caption("Earth Material Identifier")
 
-    .locked {
-        opacity: 0.5;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+# Toggle for demo
+is_pro = st.sidebar.toggle("Pro Mode (demo)", value=False)
 
 # =============================
-# COMPONENTS
+# FREE SECTION
 # =============================
 
-def render_header():
-    st.markdown("""
-    <div class="main-card">
-        <h1>🪨 GIAp</h1>
-        <div>Earth Material Identifier</div>
-    </div>
-    """, unsafe_allow_html=True)
+st.markdown("### Identify Sample")
 
-def render_upload():
-    return st.file_uploader("Upload image (rock, mineral, fossil)", type=["png","jpg","jpeg"])
+file = st.file_uploader(
+    "Upload image (rock, mineral, fossil)",
+    type=["png", "jpg", "jpeg"]
+)
 
-def render_image(img):
+if file:
+    img = Image.open(file)
     st.image(img, caption="Uploaded sample", use_container_width=True)
 
-def render_free(obs):
-    st.markdown(f"""
-    <div class="main-card">
-        <div class="answer-box">
-            <strong>Likely ID:</strong> {obs['id']}<br>
-            <strong>Confidence:</strong> {obs['confidence']}/5<br><br>
-            {obs['reason']}
-        </div>
-        <div><strong>Next step:</strong> {obs['next']}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    if st.button("Analyze"):
+        b64 = encode(file)
 
-def render_pro_locked():
-    st.markdown("""
-    <div class="main-card locked">
-        <strong>🔒 Pro Features</strong>
-        <ul>
-            <li>Multi-model validation</li>
-            <li>Zoom analysis</li>
-            <li>Follow-up chat</li>
-            <li>Session saving</li>
-            <li>Lesson plan generator</li>
-        </ul>
-    </div>
-    """, unsafe_allow_html=True)
+        raw = call_openai(OBSERVER, b64)
 
-def render_lesson_plan(obs, is_pro):
-    if is_pro:
-        if st.button("Generate Lesson Plan"):
-            prompt = LESSON_PROMPT.format(id=obs['id'], reason=obs['reason'])
-            lesson = call_openai(prompt)
+        try:
+            obs = json.loads(raw)
+        except:
+            st.error("Model error")
+            st.stop()
 
-            st.markdown("""
-            <div class="main-card">
-            <strong>Lesson Plan</strong>
-            """, unsafe_allow_html=True)
+        # ===== FREE RESULT =====
+        st.markdown("### Result")
 
-            st.write(lesson)
-            st.markdown("</div>", unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <div class="main-card locked">
-            🔒 Lesson Plan Generator (Pro)
-        </div>
-        """, unsafe_allow_html=True)
+        st.write(f"**Likely ID:** {obs['id']}")
+        st.write(f"**Confidence:** {obs['confidence']}/5")
+        st.write(obs["reason"])
+        st.info(f"Next step: {obs['next']}")
 
-# =============================
-# MAIN APP
-# =============================
+        # =============================
+        # PRO PANEL (VISIBLE ALWAYS)
+        # =============================
 
-def main():
-    st.set_page_config(page_title="GIAp", layout="wide")
-    apply_styles()
-    render_header()
+        st.markdown("---")
+        st.markdown("### 🔒 Pro Tools")
 
-    is_pro = st.sidebar.checkbox("Enable Pro (demo)")
+        col1, col2 = st.columns(2)
 
-    file = render_upload()
-
-    if file:
-        img = Image.open(file)
-        render_image(img)
-
-        if st.button("Analyze"):
-            b64 = encode(file)
-            obs_raw = call_openai(OBSERVER, b64)
-
-            try:
-                obs = json.loads(obs_raw)
-            except:
-                st.error("Model response error")
-                return
-
-            render_free(obs)
-
+        # MULTI MODEL
+        with col1:
             if is_pro:
-                st.success("Pro features unlocked")
+                if st.button("Run Multi-Model Validation"):
+                    st.info("Coming soon")
             else:
-                render_pro_locked()
+                st.button("Run Multi-Model Validation", disabled=True)
+                st.caption("Pro feature")
 
-            render_lesson_plan(obs, is_pro)
+        # LESSON PLAN
+        with col2:
+            if is_pro:
+                if st.button("Generate Lesson Plan"):
+                    prompt = LESSON_PROMPT.format(
+                        id=obs['id'],
+                        reason=obs['reason']
+                    )
+                    lesson = call_openai(prompt)
+                    st.markdown("#### Lesson Plan")
+                    st.write(lesson)
+            else:
+                st.button("Generate Lesson Plan", disabled=True)
+                st.caption("Pro feature")
 
-            render_future()
+        # SAVE
+        if is_pro:
+            st.download_button(
+                "Download Results",
+                data=json.dumps(obs, indent=2),
+                file_name="gia_result.json"
+            )
+        else:
+            st.button("Download Results", disabled=True)
+            st.caption("Pro feature")
 
-def render_future():
-    st.markdown("""
-    <div class="main-card locked">
-        <strong>Coming Soon</strong>
-        <ul>
-            <li>Class analytics</li>
-            <li>Adaptive quizzes</li>
-            <li>Lab report generator</li>
-        </ul>
-    </div>
-    """, unsafe_allow_html=True)
-
-# =============================
-# RUN
-# =============================
-
-if __name__ == "__main__":
-    main()
+        # FUTURE FEATURES
+        st.markdown("### 🚀 Coming Soon")
+        st.markdown("""
+        - Class analytics  
+        - Adaptive quizzes  
+        - Assignment builder  
+        """)
