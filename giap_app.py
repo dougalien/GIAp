@@ -7,6 +7,9 @@ import requests
 import streamlit as st
 from PIL import Image, ImageOps
 
+# Page config must be the first Streamlit command on the page.
+st.set_page_config(page_title="GIAp", layout="centered")
+
 # =========================================================
 # APP CONFIG
 # =========================================================
@@ -67,6 +70,7 @@ def init_state() -> None:
         "source_name": "",
         "focus_zone": "Full image",
         "last_image_b64": None,
+        "input_mode": "Upload",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -235,11 +239,21 @@ def export_result_text(result: Dict[str, Any], source_name: str, focus_zone: str
         f"Next step: {result.get('next_step', '')}\n"
     )
 
+
+
+def show_image_compat(image: Image.Image, caption: str) -> None:
+    try:
+        st.image(image, caption=caption, use_container_width=True)
+    except TypeError:
+        try:
+            st.image(image, caption=caption, use_column_width=True)
+        except TypeError:
+            st.image(image, caption=caption)
+
+
 # =========================================================
 # STYLES
 # =========================================================
-
-st.set_page_config(page_title=CONFIG["title"], layout="centered")
 
 st.markdown(
     """
@@ -282,9 +296,6 @@ st.markdown(
         border-radius: 10px;
         font-weight: 700;
         width: 100%;
-    }
-    div[data-baseweb="tab-list"] button {
-        min-height: 46px;
     }
     </style>
     """,
@@ -352,17 +363,21 @@ def render_accessibility_note() -> None:
 
 
 def get_image_input() -> Tuple[Optional[bytes], str]:
-    tab1, tab2 = st.tabs(["Camera", "Upload"])
     image_bytes: Optional[bytes] = None
     source_name = ""
 
-    with tab1:
-        camera_file = st.camera_input("Take a photo")
-        if camera_file is not None:
-            image_bytes = camera_file.getvalue()
-            source_name = "camera_capture.png"
+    input_mode = st.radio("Image source", ["Upload", "Camera"], horizontal=True)
+    st.session_state.input_mode = input_mode
 
-    with tab2:
+    if input_mode == "Camera":
+        if hasattr(st, "camera_input"):
+            camera_file = st.camera_input("Take a photo")
+            if camera_file is not None:
+                image_bytes = camera_file.getvalue()
+                source_name = "camera_capture.png"
+        else:
+            st.warning("This Streamlit version does not support camera input. Use upload instead.")
+    else:
         uploaded_file = st.file_uploader(
             f"Upload a {CONFIG['image_label']} image",
             type=["png", "jpg", "jpeg"],
@@ -427,12 +442,12 @@ image_bytes, source_name = get_image_input()
 if image_bytes:
     try:
         base_image = prepare_image(image_bytes)
-        st.image(base_image, caption="Source image", use_container_width=True)
+        show_image_compat(base_image, "Source image")
         focus_zone = render_focus_controls()
         focused_image = crop_by_zone(base_image, focus_zone)
 
         if focus_zone != "Full image":
-            st.image(focused_image, caption=f"Focused view: {focus_zone}", use_container_width=True)
+            show_image_compat(focused_image, f"Focused view: {focus_zone}")
 
         if st.button("Run quick analysis"):
             st.session_state.analysis = None
