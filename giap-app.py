@@ -1,26 +1,26 @@
 import base64
 import io
 import json
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import requests
 import streamlit as st
 from PIL import Image, ImageOps
 
 # Page config must be the first Streamlit command on the page.
-st.set_page_config(page_title="TIAp", layout="centered")
+st.set_page_config(page_title="GIAp", layout="centered")
 
 # =========================================================
 # APP CONFIG
 # =========================================================
 
 CONFIG = {
-    "title": "TIAp",
-    "short_name": "TIAp",
-    "subtitle": "Thermal image analysis point-and-go by We are dougalien",
+    "title": "GIAp",
+    "short_name": "GIAp",
+    "subtitle": "Geology image analysis point-and-go by We are dougalien",
     "website": "www.dougalien.com",
-    "image_label": "thermal or infrared image",
-    "analyst_role": "careful thermal image analyst",
+    "image_label": "rock, mineral, fossil, or geologic material image",
+    "analyst_role": "careful geology image analyst",
     "model": "gpt-4o-mini",
     "timeout": 60,
 }
@@ -32,15 +32,14 @@ Rules:
 - Use only visible image evidence.
 - Keep the answer short and specific.
 - Do not ask follow-up questions.
-- Do not invent temperatures, emissivity, materials, diagnoses, or causes unless directly supported by visible evidence.
-- If no temperature scale is visible, do not claim exact temperatures.
-- If the image is not enough for a precise diagnosis, describe the thermal pattern or anomaly instead.
+- Do not invent locality, chemistry, hardness, streak, taste, magnetism, or acid reaction unless directly visible.
+- If the image is not enough for a precise ID, give the best material group instead.
 - Distinguish visible observations from interpretation.
 - Prefer accurate, cautious wording over confident overreach.
 
 Return valid JSON only:
 {{
-  "candidate": "best interpretation or most likely thermal pattern, anomaly, or issue visible in the image",
+  "candidate": "best identification or most likely material group",
   "alternate": "brief alternate possibility or 'none'",
   "confidence": 1,
   "observations": ["visible feature 1", "visible feature 2", "visible feature 3"],
@@ -71,7 +70,6 @@ def init_state() -> None:
         "source_name": "",
         "focus_zone": "Full image",
         "last_image_b64": None,
-        "input_mode": "Upload",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -203,8 +201,8 @@ def call_openai_json(image_b64: str) -> Dict[str, Any]:
                     {
                         "type": "text",
                         "text": (
-                            "Analyze this thermal or infrared image carefully and identify the most likely "
-                            "thermal pattern, anomaly, or issue supported by the visible evidence."
+                            "Analyze this geology image carefully and identify the most likely "
+                            "rock, mineral, fossil, or material group supported by the visible evidence."
                         ),
                     },
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
@@ -235,9 +233,9 @@ def export_result_text(result: Dict[str, Any], source_name: str, focus_zone: str
     obs_text = "\n".join(f"- {item}" for item in result.get("observations", []))
     return (
         f"{CONFIG['title']}\n"
-        f"Source: {source_name or 'camera/upload'}\n"
+        f"Source: {source_name or 'upload'}\n"
         f"Focus area: {focus_zone}\n\n"
-        f"Likely interpretation: {result.get('candidate', '')}\n"
+        f"Likely identification: {result.get('candidate', '')}\n"
         f"Alternate: {result.get('alternate', '')}\n"
         f"Confidence: {result.get('confidence', '')}/5\n\n"
         f"Visible observations:\n{obs_text}\n\n"
@@ -364,34 +362,23 @@ def render_header() -> None:
 def render_accessibility_note() -> None:
     st.info(
         "Phone-first layout, large controls, clear labels, short results, and no required follow-up chat. "
-        "This version is designed for quick image capture and one-pass output."
+        "Use the single upload box below. On most phones it can open camera, photos, or files."
     )
 
 
 
-def get_image_input() -> Tuple[Optional[bytes], str]:
+def get_image_input() -> tuple[Optional[bytes], str]:
     image_bytes: Optional[bytes] = None
     source_name = ""
 
-    input_mode = st.radio("Image source", ["Upload", "Camera"], horizontal=True)
-    st.session_state.input_mode = input_mode
-
-    if input_mode == "Camera":
-        if hasattr(st, "camera_input"):
-            camera_file = st.camera_input("Take a photo")
-            if camera_file is not None:
-                image_bytes = camera_file.getvalue()
-                source_name = "camera_capture.png"
-        else:
-            st.warning("This Streamlit version does not support camera input. Use upload instead.")
-    else:
-        uploaded_file = st.file_uploader(
-            f"Upload a {CONFIG['image_label']}",
-            type=["png", "jpg", "jpeg"],
-        )
-        if uploaded_file is not None:
-            image_bytes = uploaded_file.getvalue()
-            source_name = uploaded_file.name
+    uploaded_file = st.file_uploader(
+        f"Add a {CONFIG['image_label']}",
+        type=["png", "jpg", "jpeg"],
+        help="On most phones, this can use the camera, photo library, or files.",
+    )
+    if uploaded_file is not None:
+        image_bytes = uploaded_file.getvalue()
+        source_name = uploaded_file.name
 
     return image_bytes, source_name
 
@@ -399,7 +386,7 @@ def get_image_input() -> Tuple[Optional[bytes], str]:
 
 def render_focus_controls() -> str:
     st.markdown("### Focus area")
-    st.caption("Whole image is fastest. Zone focus is a simple substitute until exact tap-to-target is added.")
+    st.caption("Whole image is fastest. Zone focus is optional if one part of the image matters most.")
     zone = st.selectbox(
         "Analyze which part of the image?",
         [
@@ -421,7 +408,7 @@ def render_result(result: Dict[str, Any]) -> None:
     c1.metric("Confidence", f"{result.get('confidence', '')}/5")
     c2.metric("Mode", "One pass")
 
-    st.write(f"**Likely interpretation:** {result.get('candidate', '')}")
+    st.write(f"**Likely identification:** {result.get('candidate', '')}")
     st.write(f"**Alternate:** {result.get('alternate', '')}")
 
     st.write("**Visible observations**")
@@ -456,7 +443,7 @@ if image_bytes:
         if focus_zone != "Full image":
             show_image_compat(focused_image, f"Focused view: {focus_zone}")
 
-        if st.button("Run quick analysis"):
+        if st.button("Analyze image"):
             st.session_state.analysis = None
             st.session_state.analysis_error = ""
             st.session_state.source_name = source_name
@@ -483,6 +470,6 @@ if st.session_state.analysis:
     st.download_button(
         "Download result as text",
         data=export_text,
-        file_name="tiap_result.txt",
+        file_name="giap_result.txt",
         mime="text/plain",
     )
