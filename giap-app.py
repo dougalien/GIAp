@@ -8,19 +8,19 @@ import streamlit as st
 from PIL import Image, ImageOps
 
 # Page config must be the first Streamlit command on the page.
-st.set_page_config(page_title="GIAp", layout="centered")
+st.set_page_config(page_title="TIAp", layout="centered")
 
 # =========================================================
 # APP CONFIG
 # =========================================================
 
 CONFIG = {
-    "title": "GIAp",
-    "short_name": "GIAp",
-    "subtitle": "Geology Image Analysis point-and-go by We are dougalien",
+    "title": "TIAp",
+    "short_name": "TIAp",
+    "subtitle": "Thermal image analysis point-and-go by We are dougalien",
     "website": "www.dougalien.com",
-    "image_label": "rock, mineral, fossil, or geologic material",
-    "analyst_role": "careful geology image analyst",
+    "image_label": "thermal or infrared image",
+    "analyst_role": "careful thermal image analyst",
     "model": "gpt-4o-mini",
     "timeout": 60,
 }
@@ -32,14 +32,15 @@ Rules:
 - Use only visible image evidence.
 - Keep the answer short and specific.
 - Do not ask follow-up questions.
-- Do not invent physical properties or tests that were not observed.
-- If the image is not enough for a precise ID, give the best material group instead.
+- Do not invent temperatures, emissivity, materials, diagnoses, or causes unless directly supported by visible evidence.
+- If no temperature scale is visible, do not claim exact temperatures.
+- If the image is not enough for a precise diagnosis, describe the thermal pattern or anomaly instead.
 - Distinguish visible observations from interpretation.
 - Prefer accurate, cautious wording over confident overreach.
 
 Return valid JSON only:
 {{
-  "candidate": "best identification or most likely material group",
+  "candidate": "best interpretation or most likely thermal pattern, anomaly, or issue visible in the image",
   "alternate": "brief alternate possibility or 'none'",
   "confidence": 1,
   "observations": ["visible feature 1", "visible feature 2", "visible feature 3"],
@@ -199,7 +200,13 @@ def call_openai_json(image_b64: str) -> Dict[str, Any]:
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": f"Analyze this {CONFIG['image_label']} image."},
+                    {
+                        "type": "text",
+                        "text": (
+                            "Analyze this thermal or infrared image carefully and identify the most likely "
+                            "thermal pattern, anomaly, or issue supported by the visible evidence."
+                        ),
+                    },
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
                 ],
             },
@@ -230,7 +237,7 @@ def export_result_text(result: Dict[str, Any], source_name: str, focus_zone: str
         f"{CONFIG['title']}\n"
         f"Source: {source_name or 'camera/upload'}\n"
         f"Focus area: {focus_zone}\n\n"
-        f"Likely identification: {result.get('candidate', '')}\n"
+        f"Likely interpretation: {result.get('candidate', '')}\n"
         f"Alternate: {result.get('alternate', '')}\n"
         f"Confidence: {result.get('confidence', '')}/5\n\n"
         f"Visible observations:\n{obs_text}\n\n"
@@ -379,7 +386,7 @@ def get_image_input() -> Tuple[Optional[bytes], str]:
             st.warning("This Streamlit version does not support camera input. Use upload instead.")
     else:
         uploaded_file = st.file_uploader(
-            f"Upload a {CONFIG['image_label']} image",
+            f"Upload a {CONFIG['image_label']}",
             type=["png", "jpg", "jpeg"],
         )
         if uploaded_file is not None:
@@ -414,7 +421,7 @@ def render_result(result: Dict[str, Any]) -> None:
     c1.metric("Confidence", f"{result.get('confidence', '')}/5")
     c2.metric("Mode", "One pass")
 
-    st.write(f"**Likely identification:** {result.get('candidate', '')}")
+    st.write(f"**Likely interpretation:** {result.get('candidate', '')}")
     st.write(f"**Alternate:** {result.get('alternate', '')}")
 
     st.write("**Visible observations**")
@@ -476,6 +483,6 @@ if st.session_state.analysis:
     st.download_button(
         "Download result as text",
         data=export_text,
-        file_name="giap_result.txt",
+        file_name="tiap_result.txt",
         mime="text/plain",
     )
