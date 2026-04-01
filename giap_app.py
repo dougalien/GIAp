@@ -1,8 +1,7 @@
 import base64
 import io
 import json
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import requests
 import streamlit as st
@@ -12,29 +11,19 @@ from PIL import Image, ImageOps
 # APP CONFIG
 # =========================================================
 
-@dataclass(frozen=True)
-class AppConfig:
-    title: str
-    short_name: str
-    subtitle: str
-    website: str
-    image_label: str
-    analyst_role: str
-    model: str = "gpt-4o-mini"
-    timeout: int = 60
-
-
-CONFIG = AppConfig(
-    title="GIAp",
-    short_name="GIAp",
-    subtitle="Geology Image Analysis point-and-go by We are dougalien",
-    website="www.dougalien.com",
-    image_label="rock, mineral, fossil, or geologic material",
-    analyst_role="careful geology image analyst",
-)
+CONFIG = {
+    "title": "GIAp",
+    "short_name": "GIAp",
+    "subtitle": "Geology Image Analysis point-and-go by We are dougalien",
+    "website": "www.dougalien.com",
+    "image_label": "rock, mineral, fossil, or geologic material",
+    "analyst_role": "careful geology image analyst",
+    "model": "gpt-4o-mini",
+    "timeout": 60,
+}
 
 SYSTEM_PROMPT = f"""
-You are a {CONFIG.analyst_role} for a quick mobile workflow.
+You are a {CONFIG['analyst_role']} for a quick mobile workflow.
 
 Rules:
 - Use only visible image evidence.
@@ -89,6 +78,14 @@ init_state()
 # =========================================================
 # HELPERS
 # =========================================================
+
+
+def rerun_app() -> None:
+    if hasattr(st, "rerun"):
+        st.rerun()
+    elif hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
+
 
 
 def get_secret(name: str, default: str = "") -> str:
@@ -146,8 +143,9 @@ def normalize_result(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def prepare_image(file_bytes: bytes, max_size: int = 1400) -> Image.Image:
-    image = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+    image = Image.open(io.BytesIO(file_bytes))
     image = ImageOps.exif_transpose(image)
+    image = image.convert("RGB")
     image.thumbnail((max_size, max_size))
     return image
 
@@ -158,8 +156,8 @@ def crop_by_zone(image: Image.Image, zone: str) -> Image.Image:
         return image
 
     width, height = image.size
-    third_w = width // 3
-    third_h = height // 3
+    third_w = max(1, width // 3)
+    third_h = max(1, height // 3)
 
     boxes = {
         "Top left": (0, 0, third_w, third_h),
@@ -189,7 +187,7 @@ def call_openai_json(image_b64: str) -> Dict[str, Any]:
         raise RuntimeError("Missing OPENAI_API_KEY in Streamlit secrets.")
 
     payload = {
-        "model": CONFIG.model,
+        "model": CONFIG["model"],
         "temperature": 0.1,
         "response_format": {"type": "json_object"},
         "messages": [
@@ -197,7 +195,7 @@ def call_openai_json(image_b64: str) -> Dict[str, Any]:
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": f"Analyze this {CONFIG.image_label} image."},
+                    {"type": "text", "text": f"Analyze this {CONFIG['image_label']} image."},
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
                 ],
             },
@@ -211,7 +209,7 @@ def call_openai_json(image_b64: str) -> Dict[str, Any]:
             "Content-Type": "application/json",
         },
         json=payload,
-        timeout=CONFIG.timeout,
+        timeout=CONFIG["timeout"],
     )
     response.raise_for_status()
     content = response.json()["choices"][0]["message"]["content"]
@@ -225,7 +223,7 @@ def call_openai_json(image_b64: str) -> Dict[str, Any]:
 def export_result_text(result: Dict[str, Any], source_name: str, focus_zone: str) -> str:
     obs_text = "\n".join(f"- {item}" for item in result.get("observations", []))
     return (
-        f"{CONFIG.title}\n"
+        f"{CONFIG['title']}\n"
         f"Source: {source_name or 'camera/upload'}\n"
         f"Focus area: {focus_zone}\n\n"
         f"Likely identification: {result.get('candidate', '')}\n"
@@ -241,7 +239,7 @@ def export_result_text(result: Dict[str, Any], source_name: str, focus_zone: str
 # STYLES
 # =========================================================
 
-st.set_page_config(page_title=CONFIG.title, layout="centered")
+st.set_page_config(page_title=CONFIG["title"], layout="centered")
 
 st.markdown(
     """
@@ -302,9 +300,9 @@ def render_login() -> None:
     st.markdown(
         f"""
         <div class="card" style="margin-top:2rem;">
-            <div class="title">{CONFIG.title}</div>
-            <div class="subtitle">{CONFIG.subtitle}</div>
-            <div class="site">{CONFIG.website}</div>
+            <div class="title">{CONFIG['title']}</div>
+            <div class="subtitle">{CONFIG['subtitle']}</div>
+            <div class="site">{CONFIG['website']}</div>
             <p class="small" style="margin-top:0.8rem;">Enter the app password to continue.</p>
         </div>
         """,
@@ -322,7 +320,7 @@ def render_login() -> None:
         elif entered == actual:
             st.session_state.authenticated = True
             st.session_state.login_error = ""
-            st.rerun()
+            rerun_app()
         else:
             st.session_state.login_error = "Incorrect password."
 
@@ -335,9 +333,9 @@ def render_header() -> None:
     st.markdown(
         f"""
         <div class="card">
-            <div class="title">{CONFIG.title}</div>
-            <div class="subtitle">{CONFIG.subtitle}</div>
-            <div class="site">{CONFIG.website}</div>
+            <div class="title">{CONFIG['title']}</div>
+            <div class="subtitle">{CONFIG['subtitle']}</div>
+            <div class="site">{CONFIG['website']}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -366,7 +364,7 @@ def get_image_input() -> Tuple[Optional[bytes], str]:
 
     with tab2:
         uploaded_file = st.file_uploader(
-            f"Upload a {CONFIG.image_label} image",
+            f"Upload a {CONFIG['image_label']} image",
             type=["png", "jpg", "jpeg"],
         )
         if uploaded_file is not None:
@@ -427,16 +425,16 @@ render_accessibility_note()
 image_bytes, source_name = get_image_input()
 
 if image_bytes:
-    base_image = prepare_image(image_bytes)
-    st.image(base_image, caption="Source image", use_container_width=True)
-    focus_zone = render_focus_controls()
-    focused_image = crop_by_zone(base_image, focus_zone)
+    try:
+        base_image = prepare_image(image_bytes)
+        st.image(base_image, caption="Source image", use_container_width=True)
+        focus_zone = render_focus_controls()
+        focused_image = crop_by_zone(base_image, focus_zone)
 
-    if focus_zone != "Full image":
-        st.image(focused_image, caption=f"Focused view: {focus_zone}", use_container_width=True)
+        if focus_zone != "Full image":
+            st.image(focused_image, caption=f"Focused view: {focus_zone}", use_container_width=True)
 
-    if st.button("Run quick analysis"):
-        try:
+        if st.button("Run quick analysis"):
             st.session_state.analysis = None
             st.session_state.analysis_error = ""
             st.session_state.source_name = source_name
@@ -445,10 +443,10 @@ if image_bytes:
                 st.session_state.last_image_b64 = image_b64
                 st.session_state.analysis = call_openai_json(image_b64)
             st.success("Analysis complete.")
-        except requests.RequestException as exc:
-            st.session_state.analysis_error = f"Request error: {exc}"
-        except Exception as exc:
-            st.session_state.analysis_error = f"Unexpected error: {exc}"
+    except requests.RequestException as exc:
+        st.session_state.analysis_error = f"Request error: {exc}"
+    except Exception as exc:
+        st.session_state.analysis_error = f"Unexpected error: {exc}"
 
 if st.session_state.analysis_error:
     st.error(st.session_state.analysis_error)
