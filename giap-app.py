@@ -17,7 +17,7 @@ st.set_page_config(page_title="GIAp", layout="centered")
 CONFIG = {
     "title": "GIAp",
     "short_name": "GIAp",
-    "subtitle": "Geology image analysis point-and-go by We are dougalien",
+    "subtitle": "Geology image analysis by We are dougalien",
     "website": "www.dougalien.com",
     "image_label": "rock, mineral, fossil, or geologic material image",
     "analyst_role": "careful geology image analyst",
@@ -361,8 +361,8 @@ def render_header() -> None:
 
 def render_accessibility_note() -> None:
     st.info(
-        "Phone-first layout, large controls, clear labels, short results, and no required follow-up chat. "
-        "Use the single upload box below. On most phones it can open camera, photos, or files."
+        "Phone-first layout. Point and Click. "
+        "Take a photo or upload an image."
     )
 
 
