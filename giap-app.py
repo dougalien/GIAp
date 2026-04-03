@@ -539,8 +539,20 @@ st.markdown(
 )
 
 st.info(
-    "Accessible, phone-friendly layout. Use camera or upload. The app keeps the image context for follow-up questions."
+    "Accessible, phone-friendly layout. Upload one image from camera, photo library, or files. Only the selected image is shown on screen."
 )
+
+point_tab, guided_tab = st.tabs(["Point and Click", "Guided Analysis"])
+
+with point_tab:
+    st.markdown(
+        "**Point and Click** gives a quick, careful interpretation plus one same-context suggestion for what to examine next."
+    )
+
+with guided_tab:
+    st.markdown(
+        "**Guided Analysis** asks the student for observations and an attempted name first, then gives supportive coaching based on the same image."
+    )
 
 limit = get_session_limit()
 used = st.session_state.analysis_calls_used
@@ -549,19 +561,16 @@ if limit > 0:
 else:
     st.caption(f"AI calls this session: {used} | session limit: unlimited")
 
-camera_file = st.camera_input("Take a photo")
+st.markdown("### Image and sample setup")
 uploaded_file = st.file_uploader(
-    f"Or upload a {CONFIG['image_label']}",
+    f"Upload a {CONFIG['image_label']}",
     type=["png", "jpg", "jpeg"],
-    help="On most phones, this can use the camera, photo library, or files.",
+    help="On phones, this usually lets you choose camera, photo library, or files. On laptops, upload an existing image file.",
 )
 
 image_bytes: Optional[bytes] = None
 source_name = ""
-if camera_file is not None:
-    image_bytes = camera_file.getvalue()
-    source_name = getattr(camera_file, "name", "camera_capture.jpg")
-elif uploaded_file is not None:
+if uploaded_file is not None:
     image_bytes = uploaded_file.getvalue()
     source_name = uploaded_file.name
 
@@ -600,10 +609,10 @@ if image_bytes:
 
     try:
         base_image = prepare_image(image_bytes)
-        show_image_compat(base_image, "Source image")
         focused_image = crop_by_zone(base_image, focus_zone)
-        if focus_zone != "Full image":
-            show_image_compat(focused_image, f"Focused view: {focus_zone}")
+        displayed_image = base_image if focus_zone == "Full image" else focused_image
+        displayed_caption = "Selected image" if focus_zone == "Full image" else f"Selected image: {focus_zone}"
+        show_image_compat(displayed_image, displayed_caption)
         st.session_state.last_image_b64 = image_to_b64(focused_image)
     except Exception as exc:
         st.error(f"Image error: {exc}")
@@ -627,8 +636,6 @@ def render_analysis_result(result: Dict[str, Any]) -> None:
     st.write(f"**Limits:** {result.get('limits', '')}")
     st.write(f"**Next thing to look at or think about:** {result.get('next_look', '')}")
 
-
-point_tab, guided_tab = st.tabs(["Point and Click", "Guided Analysis"])
 
 with point_tab:
     st.markdown(
