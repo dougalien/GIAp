@@ -949,7 +949,7 @@ def get_local_banner_path() -> Optional[Path]:
     return None
 
 
-def render_standard_banner(banner_path: Optional[Path], width_ratio: float = 4.8) -> None:
+def render_standard_banner(banner_path: Optional[Path], width_ratio: float = 3.0) -> None:
     if banner_path:
         left, center, right = st.columns([1.2, width_ratio, 1.2])
         with center:
