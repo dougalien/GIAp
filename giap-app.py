@@ -949,10 +949,9 @@ def get_local_banner_path() -> Optional[Path]:
     return None
 
 
-def render_top_banner() -> None:
-    banner_path = get_local_banner_path()
+def render_standard_banner(banner_path: Optional[Path], width_ratio: float = 4.8) -> None:
     if banner_path:
-        left, center, right = st.columns([1.2, 7.6, 1.2])
+        left, center, right = st.columns([1.2, width_ratio, 1.2])
         with center:
             try:
                 st.image(str(banner_path), use_container_width=True)
@@ -960,8 +959,11 @@ def render_top_banner() -> None:
                 try:
                     st.image(str(banner_path), use_column_width=True)
                 except TypeError:
-                    st.image(str(banner_path), width=1100)
-        st.caption("Banner for GIAp.")
+                    st.image(str(banner_path), width=900)
+
+
+def render_top_banner() -> None:
+    render_standard_banner(get_local_banner_path(), width_ratio=4.8)
 
 st.markdown(
     """
