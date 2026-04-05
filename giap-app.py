@@ -938,24 +938,14 @@ def export_point_text(summary: Dict[str, Any], results: Dict[str, Dict[str, Any]
 
 def get_local_banner_path() -> Optional[Path]:
     here = Path(__file__).resolve().parent
-    direct_candidates = [
+    candidates = [
         here / "giap_banner.png",
-        here / "giap-banner.png",
         here / "assets" / "giap_banner.png",
-        here / "assets" / "giap-banner.png",
         Path("/mount/src/giap/giap_banner.png"),
-        Path("/mount/src/giap/giap-banner.png"),
     ]
-    for candidate in direct_candidates:
+    for candidate in candidates:
         if candidate.exists():
             return candidate
-
-    for pattern in ["*giap*banner*.png", "*GIAp*banner*.png", "*banner*.png"]:
-        for folder in [here, here / "assets"]:
-            if folder.exists():
-                matches = sorted(folder.glob(pattern))
-                if matches:
-                    return matches[0]
     return None
 
 
@@ -972,6 +962,114 @@ def render_top_banner() -> None:
                 except TypeError:
                     st.image(str(banner_path), width=1100)
         st.caption("Banner for GIAp.")
+
+st.markdown(
+    """
+    <style>
+    html, body, [class*="css"] {
+        font-size: 17px;
+        line-height: 1.5;
+    }
+    .stApp {
+        background: #F7F9FB;
+        color: #111111;
+    }
+    .card {
+        background: white;
+        border: 1px solid #D7DCE2;
+        border-radius: 16px;
+        padding: 1rem 1.1rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 1px 4px rgba(16, 24, 40, 0.04);
+    }
+    .title {
+        font-size: 2rem;
+        font-weight: 800;
+        margin-bottom: 0.2rem;
+        color: #111111;
+    }
+    .subtitle {
+        font-size: 1.04rem;
+        color: #243746;
+        margin-bottom: 0.25rem;
+    }
+    .site {
+        color: #1B5E86;
+        font-size: 0.98rem;
+    }
+    .small {
+        color: #33424F;
+        font-size: 0.98rem;
+    }
+    a, a:visited {
+        color: #114B73;
+        text-decoration: underline;
+    }
+    div.stButton > button,
+    div[data-testid="stDownloadButton"] > button,
+    div[data-testid="stFormSubmitButton"] > button,
+    button[kind="secondary"],
+    button[kind="primary"] {
+        min-height: 48px;
+        border-radius: 10px;
+        font-weight: 700;
+        width: 100%;
+        background: #D9ECFF !important;
+        color: #111111 !important;
+        border: 1px solid #7FA8C4 !important;
+        box-shadow: none !important;
+        opacity: 1 !important;
+    }
+    div.stButton > button:hover,
+    div[data-testid="stDownloadButton"] > button:hover,
+    div[data-testid="stFormSubmitButton"] > button:hover,
+    button[kind="secondary"]:hover,
+    button[kind="primary"]:hover {
+        background: #C7E3FF !important;
+        color: #111111 !important;
+        border: 1px solid #5F8EAF !important;
+        filter: none !important;
+        opacity: 1 !important;
+    }
+    div.stButton > button:focus,
+    div[data-testid="stDownloadButton"] > button:focus,
+    div[data-testid="stFormSubmitButton"] > button:focus,
+    button[kind="secondary"]:focus,
+    button[kind="primary"]:focus,
+    div.stButton > button:focus-visible,
+    div[data-testid="stDownloadButton"] > button:focus-visible,
+    div[data-testid="stFormSubmitButton"] > button:focus-visible,
+    button[kind="secondary"]:focus-visible,
+    button[kind="primary"]:focus-visible {
+        color: #111111 !important;
+        background: #C7E3FF !important;
+        outline: 3px solid #0F4C75 !important;
+        outline-offset: 2px !important;
+        box-shadow: none !important;
+    }
+    [data-baseweb="tab-list"] button {
+        color: #111111 !important;
+        font-weight: 700 !important;
+    }
+    [data-baseweb="tab-list"] button[aria-selected="true"] {
+        background: #D9ECFF !important;
+        border-radius: 10px 10px 0 0 !important;
+    }
+    [data-testid="stInfo"] {
+        background: #EAF6FF;
+        color: #12212B;
+        border: 1px solid #A8C7DD;
+    }
+    [data-testid="stTextInput"] input,
+    [data-testid="stTextArea"] textarea,
+    [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+        color: #111111 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+render_top_banner()
 
 st.markdown(
     f"""
