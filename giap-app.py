@@ -938,14 +938,24 @@ def export_point_text(summary: Dict[str, Any], results: Dict[str, Dict[str, Any]
 
 def get_local_banner_path() -> Optional[Path]:
     here = Path(__file__).resolve().parent
-    candidates = [
+    direct_candidates = [
         here / "giap_banner.png",
+        here / "giap-banner.png",
         here / "assets" / "giap_banner.png",
+        here / "assets" / "giap-banner.png",
         Path("/mount/src/giap/giap_banner.png"),
+        Path("/mount/src/giap/giap-banner.png"),
     ]
-    for candidate in candidates:
+    for candidate in direct_candidates:
         if candidate.exists():
             return candidate
+
+    for pattern in ["*giap*banner*.png", "*GIAp*banner*.png", "*banner*.png"]:
+        for folder in [here, here / "assets"]:
+            if folder.exists():
+                matches = sorted(folder.glob(pattern))
+                if matches:
+                    return matches[0]
     return None
 
 
@@ -954,14 +964,12 @@ def render_top_banner() -> None:
     if banner_path:
         try:
             st.image(str(banner_path), use_container_width=True)
-            st.caption("Banner for GIAp.")
             return
         except TypeError:
             st.image(str(banner_path), use_column_width=True)
-            st.caption("Banner for GIAp.")
             return
         except Exception:
-            pass
+            st.warning(f"Banner file found but could not be displayed: {banner_path.name}")
 
 st.markdown(
     """
