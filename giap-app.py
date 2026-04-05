@@ -963,7 +963,7 @@ def render_standard_banner(banner_path: Optional[Path], width_ratio: float = 3.0
 
 
 def render_top_banner() -> None:
-    render_standard_banner(get_local_banner_path(), width_ratio=4.8)
+    render_standard_banner(get_local_banner_path(), width_ratio=3.0)
 
 st.markdown(
     """
